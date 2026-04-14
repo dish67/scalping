@@ -1,0 +1,73 @@
+//@version=5
+indicator("Scalping Pro - EMA Trend + VWAP + RSI + Volume + PSAR", overlay=true)
+
+emaFastLength = input.int(9, "EMA rapide", minval=1)
+emaSlowLength = input.int(21, "EMA lente", minval=1)
+rsiLength = input.int(14, "RSI longueur", minval=1)
+rsiLongLevel = input.int(50, "RSI minimum long", minval=1, maxval=100)
+rsiShortLevel = input.int(50, "RSI maximum short", minval=1, maxval=100)
+useVolumeFilter = input.bool(false, "Activer filtre volume")
+volumeLength = input.int(20, "Moyenne volume", minval=1)
+volumeMultiplier = input.float(1.0, "Multiplicateur volume", minval=0.1, step=0.1)
+cooldownBars = input.int(3, "Cooldown entre signaux", minval=0)
+psarStart = input.float(0.02, "PSAR start", minval=0.001, step=0.001)
+psarIncrement = input.float(0.02, "PSAR increment", minval=0.001, step=0.001)
+psarMax = input.float(0.2, "PSAR max", minval=0.01, step=0.01)
+minEmaSpreadPercent = input.float(0.08, "Ecart minimum EMA %", minval=0.01, step=0.01)
+showPrevDayLevels = input.bool(true, "Afficher Previous Day High/Low")
+
+ema9 = ta.ema(close, emaFastLength)
+ema21 = ta.ema(close, emaSlowLength)
+vwapValue = ta.vwap(close)
+rsiValue = ta.rsi(close, rsiLength)
+volumeAverage = ta.sma(volume, volumeLength)
+volumeOk = not useVolumeFilter or volume > volumeAverage * volumeMultiplier
+psarValue = ta.sar(psarStart, psarIncrement, psarMax)
+ema21SlopeUp = ema21 > ema21[1]
+ema21SlopeDown = ema21 < ema21[1]
+emaSpreadPercent = math.abs(ema9 - ema21) / close * 100
+emaSpreadOk = emaSpreadPercent >= minEmaSpreadPercent
+
+prevDayHigh = request.security(syminfo.tickerid, "D", high[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+prevDayLow = request.security(syminfo.tickerid, "D", low[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+
+trendLong = ema9 > ema21 and close > vwapValue and rsiValue >= rsiLongLevel and volumeOk and close > psarValue and ema21SlopeUp and emaSpreadOk
+trendShort = ema9 < ema21 and close < vwapValue and rsiValue <= rsiShortLevel and volumeOk and close < psarValue and ema21SlopeDown and emaSpreadOk
+
+longCrossSignal = ta.crossover(ema9, ema21) and close > vwapValue and close > psarValue and ema21SlopeUp
+shortCrossSignal = ta.crossunder(ema9, ema21) and close < vwapValue and close < psarValue and ema21SlopeDown
+
+longPullbackSignal = trendLong and low <= ema9 and close > ema9 and close > open
+shortPullbackSignal = trendShort and high >= ema9 and close < ema9 and close < open and low < low[1]
+
+rawLongSignal = barstate.isconfirmed and (longCrossSignal or longPullbackSignal)
+rawShortSignal = barstate.isconfirmed and (shortCrossSignal or shortPullbackSignal)
+
+var int lastLongSignalBar = na
+var int lastShortSignalBar = na
+
+longSignal = false
+shortSignal = false
+
+if rawLongSignal and (na(lastLongSignalBar) or bar_index - lastLongSignalBar > cooldownBars)
+    longSignal := true
+    lastLongSignalBar := bar_index
+
+if rawShortSignal and (na(lastShortSignalBar) or bar_index - lastShortSignalBar > cooldownBars)
+    shortSignal := true
+    lastShortSignalBar := bar_index
+
+plot(ema9, title="EMA 9", color=color.orange, linewidth=2)
+plot(ema21, title="EMA 21", color=color.blue, linewidth=2)
+plot(vwapValue, title="VWAP", color=color.purple, linewidth=2)
+plot(psarValue, title="PSAR", color=color.new(color.aqua, 0), linewidth=1, style=plot.style_circles)
+plot(showPrevDayLevels ? prevDayHigh : na, title="Previous Day High", color=color.new(color.green, 20), linewidth=1, style=plot.style_linebr)
+plot(showPrevDayLevels ? prevDayLow : na, title="Previous Day Low", color=color.new(color.red, 20), linewidth=1, style=plot.style_linebr)
+
+plotshape(longSignal, title="Signal achat", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.small, text="BUY")
+plotshape(shortSignal, title="Signal vente", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="SELL")
+
+barcolor(trendLong ? color.new(color.lime, 78) : trendShort ? color.new(color.red, 78) : na)
+
+alertcondition(longSignal, title="Alerte achat", message="Signal BUY: EMA Trend + VWAP + RSI + Volume + PSAR")
+alertcondition(shortSignal, title="Alerte vente", message="Signal SELL: EMA Trend + VWAP + RSI + Volume + PSAR")
