@@ -1,0 +1,377 @@
+//@version=5
+strategy("Scalping BTC PRO V6 VISUELLE + Pullback Detector + Sniper Mode",
+     overlay=true,
+     initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10,
+     pyramiding=0,
+     commission_type=strategy.commission.percent,
+     commission_value=0.04)
+
+//====================================================
+// INPUTS
+//====================================================
+emaFastLen        = input.int(9, "EMA Rapide", minval=1)
+emaSlowLen        = input.int(21, "EMA Lente", minval=1)
+emaTrendLen       = input.int(200, "EMA Tendance", minval=1)
+
+diLen             = input.int(14, "DI Length", minval=1)
+adxSmooth         = input.int(14, "ADX Smoothing", minval=1)
+adxMin            = input.float(18.0, "ADX minimum", step=0.5)
+
+pivotLen          = input.int(3, "Pivot Length HH/HL/LH/LL", minval=1)
+pullbackLookback  = input.int(3, "Lookback break structure", minval=1)
+swingLookback     = input.int(5, "Swing stop lookback", minval=2)
+
+tp1RR             = input.float(1.5, "TP1 RR", step=0.1)
+tp2RR             = input.float(3.0, "TP2 RR", step=0.1)
+
+cooldownBars      = input.int(4, "Cooldown barres", minval=1)
+
+maxFastDistPct    = input.float(0.30, "Distance max EMA rapide (%)", step=0.01)
+maxSlowDistPct    = input.float(0.60, "Distance max EMA lente (%)", step=0.01)
+
+rangeLookback     = input.int(10, "Lookback anti-range", minval=2)
+rangeThresholdPct = input.float(0.20, "Seuil range (%)", step=0.01)
+
+showStructure     = input.bool(true, "Afficher HH/HL/LH/LL")
+showPDZones       = input.bool(true, "Afficher Premium / Discount")
+showRangeBg       = input.bool(true, "Colorer range")
+showShorts        = input.bool(true, "Activer shorts")
+showBOSCHOCH      = input.bool(true, "Afficher BOS / CHOCH")
+showSignals       = input.bool(true, "Afficher LONG / SHORT")
+showPullbackDetector = input.bool(true, "Afficher Pullback Detector")
+
+pullbackTolerancePct = input.float(0.10, "Tolérance EMA pullback (%)", step=0.01)
+minRetraceBars       = input.int(1, "Bars mini de retracement", minval=1)
+maxRetraceBars       = input.int(6, "Bars max de retracement", minval=1)
+
+sniperMode        = input.bool(true, "SNIPER MODE (Ultra sélectif)")
+sniperBarsWindow  = input.int(10, "Fenêtre max après CHOCH", minval=1)
+sniperSlopeLen    = input.int(3, "Pente EMA lookback", minval=1)
+
+//====================================================
+// EMA / DMI
+//====================================================
+emaFast  = ta.ema(close, emaFastLen)
+emaSlow  = ta.ema(close, emaSlowLen)
+emaTrend = ta.ema(close, emaTrendLen)
+
+[diplus, diminus, adx] = ta.dmi(diLen, adxSmooth)
+
+//====================================================
+// TREND FILTERS
+//====================================================
+bullTrend = close > emaTrend and emaFast > emaSlow and adx > adxMin and diplus > diminus
+bearTrend = close < emaTrend and emaFast < emaSlow and adx > adxMin and diminus > diplus
+
+//====================================================
+// ANTI-EXTENSION
+//====================================================
+distFastLong  = ((close - emaFast) / emaFast) * 100.0
+distSlowLong  = ((close - emaSlow) / emaSlow) * 100.0
+distFastShort = ((emaFast - close) / emaFast) * 100.0
+distSlowShort = ((emaSlow - close) / emaSlow) * 100.0
+
+notTooExtendedLong  = distFastLong <= maxFastDistPct and distSlowLong <= maxSlowDistPct
+notTooExtendedShort = distFastShort <= maxFastDistPct and distSlowShort <= maxSlowDistPct
+
+//====================================================
+// ANTI-RANGE
+//====================================================
+rangeHigh = ta.highest(high, rangeLookback)
+rangeLow  = ta.lowest(low, rangeLookback)
+rangePct  = ((rangeHigh - rangeLow) / close) * 100.0
+isRange   = rangePct <= rangeThresholdPct
+
+bgcolor(showRangeBg and isRange ? color.new(color.gray, 92) : na)
+
+//====================================================
+// PIVOTS / STRUCTURE
+//====================================================
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+var float prevHighPivot = na
+var float prevLowPivot  = na
+var float lastHighPivot = na
+var float lastLowPivot  = na
+
+if not na(ph)
+    if showStructure
+        txtH = na(prevHighPivot) ? "H" : (ph > prevHighPivot ? "HH" : "LH")
+        colH = na(prevHighPivot) ? color.gray : (ph > prevHighPivot ? color.new(color.green, 0) : color.new(color.orange, 0))
+        label.new(bar_index - pivotLen, ph, txtH, style=label.style_label_down, textcolor=color.white, color=colH, size=size.small)
+    prevHighPivot := ph
+    lastHighPivot := ph
+
+if not na(pl)
+    if showStructure
+        txtL = na(prevLowPivot) ? "L" : (pl > prevLowPivot ? "HL" : "LL")
+        colL = na(prevLowPivot) ? color.gray : (pl > prevLowPivot ? color.new(color.teal, 0) : color.new(color.red, 0))
+        label.new(bar_index - pivotLen, pl, txtL, style=label.style_label_up, textcolor=color.white, color=colL, size=size.small)
+    prevLowPivot := pl
+    lastLowPivot := pl
+
+//====================================================
+// MARKET STRUCTURE STATE + CHOCH / BOS
+//====================================================
+var int structureBias = 0
+//  1 = bullish
+// -1 = bearish
+//  0 = neutral
+
+bullBreak = not na(lastHighPivot) and close > lastHighPivot
+bearBreak = not na(lastLowPivot) and close < lastLowPivot
+
+chochBull = bullBreak and structureBias <= 0
+chochBear = bearBreak and structureBias >= 0
+
+bosBull = bullBreak and structureBias == 1
+bosBear = bearBreak and structureBias == -1
+
+if chochBull or bosBull
+    structureBias := 1
+if chochBear or bosBear
+    structureBias := -1
+
+//====================================================
+// TRACK CHOCH / FIRST PULLBACK
+//====================================================
+var int  lastChochBar = na
+var bool pullbackUsedLong = false
+var bool pullbackUsedShort = false
+
+if chochBull
+    lastChochBar := bar_index
+    pullbackUsedLong := false
+
+if chochBear
+    lastChochBar := bar_index
+    pullbackUsedShort := false
+
+barsSinceChoch = na(lastChochBar) ? 999 : bar_index - lastChochBar
+sniperWindow   = barsSinceChoch <= sniperBarsWindow
+
+//====================================================
+// PREMIUM / DISCOUNT
+//====================================================
+var float dealingHigh = na
+var float dealingLow  = na
+
+if not na(lastHighPivot) and not na(lastLowPivot)
+    dealingHigh := math.max(lastHighPivot, lastLowPivot)
+    dealingLow  := math.min(lastHighPivot, lastLowPivot)
+
+eq = not na(dealingHigh) and not na(dealingLow) ? (dealingHigh + dealingLow) / 2.0 : na
+
+inDiscount = not na(eq) and close < eq
+inPremium  = not na(eq) and close > eq
+
+plot(showPDZones ? dealingHigh : na, "Premium High", color=color.new(color.red, 70), linewidth=1, style=plot.style_linebr)
+plot(showPDZones ? dealingLow  : na, "Discount Low", color=color.new(color.green, 70), linewidth=1, style=plot.style_linebr)
+plot(showPDZones ? eq          : na, "Equilibrium", color=color.new(color.yellow, 50), linewidth=1, style=plot.style_linebr)
+
+//====================================================
+// REAL PULLBACK DETECTOR
+//====================================================
+distToFast = math.abs(close - emaFast) / close * 100.0
+distToSlow = math.abs(close - emaSlow) / close * 100.0
+
+nearFast = distToFast <= pullbackTolerancePct
+nearSlow = distToSlow <= pullbackTolerancePct
+nearEMA  = nearFast or nearSlow
+
+recentRedBars   = ta.barssince(close < open)
+recentGreenBars = ta.barssince(close > open)
+
+// Vrai pullback long
+realPullbackLong =
+     structureBias == 1 and
+     emaFast > emaSlow and
+     nearEMA and
+     low <= emaFast and
+     close >= emaFast and
+     recentRedBars >= minRetraceBars and
+     recentRedBars <= maxRetraceBars and
+     close > emaSlow
+
+// Vrai pullback short
+realPullbackShort =
+     structureBias == -1 and
+     emaFast < emaSlow and
+     nearEMA and
+     high >= emaFast and
+     close <= emaFast and
+     recentGreenBars >= minRetraceBars and
+     recentGreenBars <= maxRetraceBars and
+     close < emaSlow
+
+firstPullbackLong  = realPullbackLong and not pullbackUsedLong
+firstPullbackShort = realPullbackShort and not pullbackUsedShort
+
+plotshape(showPullbackDetector and realPullbackLong,
+     title="PB LONG",
+     style=shape.circle,
+     location=location.belowbar,
+     color=color.new(color.lime, 0),
+     size=size.tiny,
+     text="PB")
+
+plotshape(showPullbackDetector and realPullbackShort,
+     title="PB SHORT",
+     style=shape.circle,
+     location=location.abovebar,
+     color=color.new(color.red, 0),
+     size=size.tiny,
+     text="PB")
+
+//====================================================
+// SETUPS
+//====================================================
+breakHigh = high > ta.highest(high[1], pullbackLookback)
+breakLow  = low < ta.lowest(low[1], pullbackLookback)
+
+var int lastEntryBar = na
+canTrade = na(lastEntryBar) or (bar_index - lastEntryBar > cooldownBars)
+
+longContext = (bullTrend or structureBias == 1 or chochBull) and not isRange
+longLocationOk = inDiscount or (not na(eq) and math.abs(close - eq) / close * 100 < 0.10)
+
+shortContext = (bearTrend or structureBias == -1 or chochBear) and not isRange
+shortLocationOk = inPremium or (not na(eq) and math.abs(close - eq) / close * 100 < 0.10)
+
+//====================================================
+// SNIPER MODE FILTERS
+//====================================================
+emaSlopeFast = emaFast - emaFast[sniperSlopeLen]
+emaSlopeSlow = emaSlow - emaSlow[sniperSlopeLen]
+
+trendStrongLong  = emaSlopeFast > 0 and emaSlopeSlow > 0
+trendStrongShort = emaSlopeFast < 0 and emaSlopeSlow < 0
+
+longConditionBase =
+     longContext and
+     longLocationOk and
+     realPullbackLong and
+     breakHigh and
+     notTooExtendedLong and
+     strategy.position_size == 0 and
+     canTrade
+
+shortConditionBase =
+     showShorts and
+     shortContext and
+     shortLocationOk and
+     realPullbackShort and
+     breakLow and
+     notTooExtendedShort and
+     strategy.position_size == 0 and
+     canTrade
+
+longConditionSniper =
+     longContext and
+     longLocationOk and
+     firstPullbackLong and
+     trendStrongLong and
+     sniperWindow and
+     breakHigh and
+     notTooExtendedLong and
+     strategy.position_size == 0 and
+     canTrade
+
+shortConditionSniper =
+     showShorts and
+     shortContext and
+     shortLocationOk and
+     firstPullbackShort and
+     trendStrongShort and
+     sniperWindow and
+     breakLow and
+     notTooExtendedShort and
+     strategy.position_size == 0 and
+     canTrade
+
+longCondition  = sniperMode ? longConditionSniper  : longConditionBase
+shortCondition = sniperMode ? shortConditionSniper : shortConditionBase
+
+//====================================================
+// RISK MANAGEMENT
+//====================================================
+longSwingLow   = ta.lowest(low, swingLookback)
+shortSwingHigh = ta.highest(high, swingLookback)
+
+longRisk  = close - longSwingLow
+shortRisk = shortSwingHigh - close
+
+longTP1 = close + longRisk * tp1RR
+longTP2 = close + longRisk * tp2RR
+shortTP1 = close - shortRisk * tp1RR
+shortTP2 = close - shortRisk * tp2RR
+
+//====================================================
+// ORDERS
+//====================================================
+if longCondition and longRisk > syminfo.mintick
+    strategy.entry("LONG", strategy.long)
+    lastEntryBar := bar_index
+    pullbackUsedLong := true
+
+if shortCondition and shortRisk > syminfo.mintick
+    strategy.entry("SHORT", strategy.short)
+    lastEntryBar := bar_index
+    pullbackUsedShort := true
+
+strategy.exit("LONG TP1", from_entry="LONG", limit=longTP1, stop=longSwingLow, qty_percent=50)
+strategy.exit("LONG TP2", from_entry="LONG", limit=longTP2, stop=longSwingLow)
+
+strategy.exit("SHORT TP1", from_entry="SHORT", limit=shortTP1, stop=shortSwingHigh, qty_percent=50)
+strategy.exit("SHORT TP2", from_entry="SHORT", limit=shortTP2, stop=shortSwingHigh)
+
+//====================================================
+// BREAK-EVEN
+//====================================================
+if strategy.position_size > 0 and strategy.position_avg_price > 0
+    longTP1Reached = high >= strategy.position_avg_price + (strategy.position_avg_price - longSwingLow) * tp1RR
+    if longTP1Reached
+        strategy.exit("LONG BE", from_entry="LONG", stop=strategy.position_avg_price)
+
+if strategy.position_size < 0 and strategy.position_avg_price > 0
+    shortTP1Reached = low <= strategy.position_avg_price - (shortSwingHigh - strategy.position_avg_price) * tp1RR
+    if shortTP1Reached
+        strategy.exit("SHORT BE", from_entry="SHORT", stop=strategy.position_avg_price)
+
+//====================================================
+// VISUEL BOS / CHOCH
+//====================================================
+if showBOSCHOCH and chochBull
+    label.new(bar_index, high, "CHOCH ↑", style=label.style_label_up, color=color.new(color.lime, 0), textcolor=color.white, size=size.normal)
+
+if showBOSCHOCH and chochBear
+    label.new(bar_index, low, "CHOCH ↓", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.normal)
+
+if showBOSCHOCH and bosBull
+    label.new(bar_index, high, "▲", style=label.style_label_up, color=color.new(color.green, 70), textcolor=color.white, size=size.small)
+
+if showBOSCHOCH and bosBear
+    label.new(bar_index, low, "▼", style=label.style_label_down, color=color.new(color.red, 70), textcolor=color.white, size=size.small)
+
+//====================================================
+// ALERTS
+//====================================================
+alertcondition(longCondition, title="SNIPER LONG V6", message="SNIPER LONG V6 sur {{ticker}}")
+alertcondition(shortCondition, title="SNIPER SHORT V6", message="SNIPER SHORT V6 sur {{ticker}}")
+alertcondition(chochBull, title="CHOCH BULL V6", message="CHOCH BULL détecté sur {{ticker}}")
+alertcondition(chochBear, title="CHOCH BEAR V6", message="CHOCH BEAR détecté sur {{ticker}}")
+alertcondition(realPullbackLong, title="PULLBACK LONG READY", message="Pullback LONG détecté sur {{ticker}}")
+alertcondition(realPullbackShort, title="PULLBACK SHORT READY", message="Pullback SHORT détecté sur {{ticker}}")
+
+//====================================================
+// PLOTS
+//====================================================
+plot(emaFast,  "EMA Rapide", color=color.orange, linewidth=2)
+plot(emaSlow,  "EMA Lente", color=color.blue, linewidth=2)
+plot(emaTrend, "EMA Tendance", color=color.purple, linewidth=2)
+
+plotshape(showSignals and longCondition,  title="Signal Long",  style=shape.triangleup,   location=location.belowbar, color=color.lime, size=size.small, text="LONG")
+plotshape(showSignals and shortCondition, title="Signal Short", style=shape.triangledown, location=location.abovebar, color=color.red,  size=size.small, text="SHORT")
