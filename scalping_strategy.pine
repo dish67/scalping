@@ -15,6 +15,9 @@ psarIncrement = input.float(0.02, "PSAR increment", minval=0.001, step=0.001)
 psarMax = input.float(0.2, "PSAR max", minval=0.01, step=0.01)
 minEmaSpreadPercent = input.float(0.08, "Ecart minimum EMA %", minval=0.01, step=0.01)
 showPrevDayLevels = input.bool(true, "Afficher Previous Day High/Low")
+showMarketStructure = input.bool(true, "Afficher structure HH HL LH LL")
+pivotLeftBars = input.int(3, "Pivot left bars", minval=1)
+pivotRightBars = input.int(3, "Pivot right bars", minval=1)
 
 ema9 = ta.ema(close, emaFastLength)
 ema21 = ta.ema(close, emaSlowLength)
@@ -43,6 +46,23 @@ shortPullbackSignal = trendShort and high >= ema9 and close < ema9 and close < o
 rawLongSignal = barstate.isconfirmed and (longCrossSignal or longPullbackSignal)
 rawShortSignal = barstate.isconfirmed and (shortCrossSignal or shortPullbackSignal)
 
+pivotHigh = ta.pivothigh(high, pivotLeftBars, pivotRightBars)
+pivotLow = ta.pivotlow(low, pivotLeftBars, pivotRightBars)
+
+var float lastPivotHigh = na
+var float lastPivotLow = na
+
+hhLabel = not na(pivotHigh) and (na(lastPivotHigh) or pivotHigh > lastPivotHigh)
+lhLabel = not na(pivotHigh) and not na(lastPivotHigh) and pivotHigh <= lastPivotHigh
+hlLabel = not na(pivotLow) and (na(lastPivotLow) or pivotLow > lastPivotLow)
+llLabel = not na(pivotLow) and not na(lastPivotLow) and pivotLow <= lastPivotLow
+
+if not na(pivotHigh)
+    lastPivotHigh := pivotHigh
+
+if not na(pivotLow)
+    lastPivotLow := pivotLow
+
 var int lastLongSignalBar = na
 var int lastShortSignalBar = na
 
@@ -66,6 +86,10 @@ plot(showPrevDayLevels ? prevDayLow : na, title="Previous Day Low", color=color.
 
 plotshape(longSignal, title="Signal achat", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.small, text="BUY")
 plotshape(shortSignal, title="Signal vente", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="SELL")
+plotshape(showMarketStructure and hhLabel, title="HH", style=shape.labelup, location=location.abovebar, offset=-pivotRightBars, color=color.new(color.green, 0), text="HH", textcolor=color.white, size=size.tiny)
+plotshape(showMarketStructure and lhLabel, title="LH", style=shape.labelup, location=location.abovebar, offset=-pivotRightBars, color=color.new(color.orange, 0), text="LH", textcolor=color.white, size=size.tiny)
+plotshape(showMarketStructure and hlLabel, title="HL", style=shape.labeldown, location=location.belowbar, offset=-pivotRightBars, color=color.new(color.teal, 0), text="HL", textcolor=color.white, size=size.tiny)
+plotshape(showMarketStructure and llLabel, title="LL", style=shape.labeldown, location=location.belowbar, offset=-pivotRightBars, color=color.new(color.red, 0), text="LL", textcolor=color.white, size=size.tiny)
 
 barcolor(trendLong ? color.new(color.lime, 78) : trendShort ? color.new(color.red, 78) : na)
 
