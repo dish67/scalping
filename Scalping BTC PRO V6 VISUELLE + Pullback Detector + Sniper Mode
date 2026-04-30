@@ -14,6 +14,8 @@ strategy("Scalping BTC PRO V6 VISUELLE + Pullback Detector + Sniper Mode",
 emaFastLen        = input.int(9, "EMA Rapide", minval=1)
 emaSlowLen        = input.int(21, "EMA Lente", minval=1)
 emaTrendLen       = input.int(200, "EMA Tendance", minval=1)
+useHTFBias        = input.bool(true, "Activer biais HTF")
+htfTimeframe      = input.timeframe("60", "Timeframe HTF")
 
 diLen             = input.int(14, "DI Length", minval=1)
 adxSmooth         = input.int(14, "ADX Smoothing", minval=1)
@@ -34,13 +36,34 @@ maxSlowDistPct    = input.float(0.60, "Distance max EMA lente (%)", step=0.01)
 rangeLookback     = input.int(10, "Lookback anti-range", minval=2)
 rangeThresholdPct = input.float(0.20, "Seuil range (%)", step=0.01)
 
-showStructure     = input.bool(true, "Afficher HH/HL/LH/LL")
-showPDZones       = input.bool(true, "Afficher Premium / Discount")
+showStructure     = input.bool(false, "Afficher HH/HL/LH/LL")
+showPDZones       = input.bool(false, "Afficher Premium / Discount")
 showRangeBg       = input.bool(true, "Colorer range")
 showShorts        = input.bool(true, "Activer shorts")
 showBOSCHOCH      = input.bool(true, "Afficher BOS / CHOCH")
 showSignals       = input.bool(true, "Afficher LONG / SHORT")
 showPullbackDetector = input.bool(true, "Afficher Pullback Detector")
+showInfoPanel     = input.bool(true, "Afficher panneau infos")
+showSLTPLevels    = input.bool(true, "Afficher SL / TP")
+cleanMode         = input.bool(true, "Mode clean visuel")
+ultraCleanMode    = input.bool(true, "Mode ultra clean 5M")
+showRSIATRInPanel = input.bool(false, "Afficher RSI / ATR dans panneau")
+showOnlySniperPB  = input.bool(true, "PB seulement en mode sniper")
+structureRecentOnly = input.bool(true, "Structure recente seulement")
+maxStructureLabels = input.int(8, "Max labels structure", minval=2, maxval=50)
+panelCorner       = input.string("Top Right", "Position panneau", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"])
+useVolumeFilter   = input.bool(true, "Filtre volume")
+volumeMaLen       = input.int(20, "Moyenne volume", minval=1)
+volumeMultiplier  = input.float(1.2, "Multiplicateur volume", minval=0.1, step=0.1)
+rsiLen            = input.int(14, "RSI longueur", minval=1)
+atrLen            = input.int(14, "ATR longueur", minval=1)
+rsiLongMin        = input.float(52.0, "RSI min long", minval=1, maxval=99, step=0.5)
+rsiShortMax       = input.float(48.0, "RSI max short", minval=1, maxval=99, step=0.5)
+useSessionFilter  = input.bool(true, "Filtre session")
+tradeSession      = input.session("0800-1130", "Session de trade")
+useLiquiditySweep = input.bool(true, "Filtre sweep liquidite")
+liquidityLookback = input.int(10, "Lookback sweep", minval=2)
+minRR             = input.float(1.2, "RR minimum", minval=0.1, step=0.1)
 
 pullbackTolerancePct = input.float(0.10, "Tolérance EMA pullback (%)", step=0.01)
 minRetraceBars       = input.int(1, "Bars mini de retracement", minval=1)
@@ -56,6 +79,14 @@ sniperSlopeLen    = input.int(3, "Pente EMA lookback", minval=1)
 emaFast  = ta.ema(close, emaFastLen)
 emaSlow  = ta.ema(close, emaSlowLen)
 emaTrend = ta.ema(close, emaTrendLen)
+hftClose = request.security(syminfo.tickerid, htfTimeframe, close)
+htfEmaFast = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, emaFastLen))
+htfEmaSlow = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, emaSlowLen))
+htfEmaTrend = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, emaTrendLen))
+rsiValue = ta.rsi(close, rsiLen)
+atrValue = ta.atr(atrLen)
+volumeMa = ta.sma(volume, volumeMaLen)
+volumeOk = not useVolumeFilter or volume > volumeMa * volumeMultiplier
 
 [diplus, diminus, adx] = ta.dmi(diLen, adxSmooth)
 
@@ -64,6 +95,11 @@ emaTrend = ta.ema(close, emaTrendLen)
 //====================================================
 bullTrend = close > emaTrend and emaFast > emaSlow and adx > adxMin and diplus > diminus
 bearTrend = close < emaTrend and emaFast < emaSlow and adx > adxMin and diminus > diplus
+bullMomentumOk = rsiValue >= rsiLongMin
+bearMomentumOk = rsiValue <= rsiShortMax
+htfBullBias = hftClose > htfEmaTrend and htfEmaFast > htfEmaSlow
+htfBearBias = hftClose < htfEmaTrend and htfEmaFast < htfEmaSlow
+sessionOk = not useSessionFilter or not na(time(timeframe.period, tradeSession))
 
 //====================================================
 // ANTI-EXTENSION
@@ -96,20 +132,30 @@ var float prevHighPivot = na
 var float prevLowPivot  = na
 var float lastHighPivot = na
 var float lastLowPivot  = na
+var label[] structureLabels = array.new_label()
+
+showStructureVisual = showStructure and not ultraCleanMode
+showPDZonesVisual = showPDZones and not ultraCleanMode
 
 if not na(ph)
-    if showStructure
+    if showStructureVisual
         txtH = na(prevHighPivot) ? "H" : (ph > prevHighPivot ? "HH" : "LH")
         colH = na(prevHighPivot) ? color.gray : (ph > prevHighPivot ? color.new(color.green, 0) : color.new(color.orange, 0))
-        label.new(bar_index - pivotLen, ph, txtH, style=label.style_label_down, textcolor=color.white, color=colH, size=size.small)
+        newLabel = label.new(bar_index - pivotLen, ph, txtH, style=label.style_label_down, textcolor=color.white, color=colH, size=structureRecentOnly ? size.tiny : size.small)
+        array.push(structureLabels, newLabel)
+        if structureRecentOnly and array.size(structureLabels) > maxStructureLabels
+            label.delete(array.shift(structureLabels))
     prevHighPivot := ph
     lastHighPivot := ph
 
 if not na(pl)
-    if showStructure
+    if showStructureVisual
         txtL = na(prevLowPivot) ? "L" : (pl > prevLowPivot ? "HL" : "LL")
         colL = na(prevLowPivot) ? color.gray : (pl > prevLowPivot ? color.new(color.teal, 0) : color.new(color.red, 0))
-        label.new(bar_index - pivotLen, pl, txtL, style=label.style_label_up, textcolor=color.white, color=colL, size=size.small)
+        newLabel = label.new(bar_index - pivotLen, pl, txtL, style=label.style_label_up, textcolor=color.white, color=colL, size=structureRecentOnly ? size.tiny : size.small)
+        array.push(structureLabels, newLabel)
+        if structureRecentOnly and array.size(structureLabels) > maxStructureLabels
+            label.delete(array.shift(structureLabels))
     prevLowPivot := pl
     lastLowPivot := pl
 
@@ -121,8 +167,8 @@ var int structureBias = 0
 // -1 = bearish
 //  0 = neutral
 
-bullBreak = not na(lastHighPivot) and close > lastHighPivot
-bearBreak = not na(lastLowPivot) and close < lastLowPivot
+bullBreak = not na(lastHighPivot) and close > lastHighPivot and close[1] <= lastHighPivot
+bearBreak = not na(lastLowPivot) and close < lastLowPivot and close[1] >= lastLowPivot
 
 chochBull = bullBreak and structureBias <= 0
 chochBear = bearBreak and structureBias >= 0
@@ -141,6 +187,9 @@ if chochBear or bosBear
 var int  lastChochBar = na
 var bool pullbackUsedLong = false
 var bool pullbackUsedShort = false
+flat = strategy.position_size == 0
+positionJustClosed = flat and nz(strategy.position_size[1]) != 0
+panelPosition = panelCorner == "Top Left" ? position.top_left : panelCorner == "Bottom Right" ? position.bottom_right : panelCorner == "Bottom Left" ? position.bottom_left : position.top_right
 
 if chochBull
     lastChochBar := bar_index
@@ -168,9 +217,9 @@ eq = not na(dealingHigh) and not na(dealingLow) ? (dealingHigh + dealingLow) / 2
 inDiscount = not na(eq) and close < eq
 inPremium  = not na(eq) and close > eq
 
-plot(showPDZones ? dealingHigh : na, "Premium High", color=color.new(color.red, 70), linewidth=1, style=plot.style_linebr)
-plot(showPDZones ? dealingLow  : na, "Discount Low", color=color.new(color.green, 70), linewidth=1, style=plot.style_linebr)
-plot(showPDZones ? eq          : na, "Equilibrium", color=color.new(color.yellow, 50), linewidth=1, style=plot.style_linebr)
+plot(showPDZonesVisual ? dealingHigh : na, "Premium High", color=color.new(color.red, 70), linewidth=1, style=plot.style_linebr)
+plot(showPDZonesVisual ? dealingLow  : na, "Discount Low", color=color.new(color.green, 70), linewidth=1, style=plot.style_linebr)
+plot(showPDZonesVisual ? eq          : na, "Equilibrium", color=color.new(color.yellow, cleanMode ? 75 : 50), linewidth=cleanMode ? 1 : 2, style=plot.style_linebr)
 
 //====================================================
 // REAL PULLBACK DETECTOR
@@ -210,20 +259,36 @@ realPullbackShort =
 firstPullbackLong  = realPullbackLong and not pullbackUsedLong
 firstPullbackShort = realPullbackShort and not pullbackUsedShort
 
-plotshape(showPullbackDetector and realPullbackLong,
-     title="PB LONG",
+plotshape(showPullbackDetector and (not showOnlySniperPB or sniperMode) and realPullbackLong and cleanMode,
+     title="PB LONG Clean",
      style=shape.circle,
      location=location.belowbar,
      color=color.new(color.lime, 0),
      size=size.tiny,
+     text="")
+
+plotshape(showPullbackDetector and (not showOnlySniperPB or sniperMode) and realPullbackLong and not cleanMode,
+     title="PB LONG Full",
+     style=shape.circle,
+     location=location.belowbar,
+     color=color.new(color.lime, 0),
+     size=size.small,
      text="PB")
 
-plotshape(showPullbackDetector and realPullbackShort,
-     title="PB SHORT",
+plotshape(showPullbackDetector and (not showOnlySniperPB or sniperMode) and realPullbackShort and cleanMode,
+     title="PB SHORT Clean",
      style=shape.circle,
      location=location.abovebar,
      color=color.new(color.red, 0),
      size=size.tiny,
+     text="")
+
+plotshape(showPullbackDetector and (not showOnlySniperPB or sniperMode) and realPullbackShort and not cleanMode,
+     title="PB SHORT Full",
+     style=shape.circle,
+     location=location.abovebar,
+     color=color.new(color.red, 0),
+     size=size.small,
      text="PB")
 
 //====================================================
@@ -231,14 +296,18 @@ plotshape(showPullbackDetector and realPullbackShort,
 //====================================================
 breakHigh = high > ta.highest(high[1], pullbackLookback)
 breakLow  = low < ta.lowest(low[1], pullbackLookback)
+prevLiquidityLow = ta.lowest(low[1], liquidityLookback)
+prevLiquidityHigh = ta.highest(high[1], liquidityLookback)
+longSweep = low < prevLiquidityLow and close > prevLiquidityLow and close > open
+shortSweep = high > prevLiquidityHigh and close < prevLiquidityHigh and close < open
 
 var int lastEntryBar = na
 canTrade = na(lastEntryBar) or (bar_index - lastEntryBar > cooldownBars)
 
-longContext = (bullTrend or structureBias == 1 or chochBull) and not isRange
+longContext = (bullTrend or structureBias == 1 or chochBull) and not isRange and sessionOk and (not useHTFBias or htfBullBias)
 longLocationOk = inDiscount or (not na(eq) and math.abs(close - eq) / close * 100 < 0.10)
 
-shortContext = (bearTrend or structureBias == -1 or chochBear) and not isRange
+shortContext = (bearTrend or structureBias == -1 or chochBear) and not isRange and sessionOk and (not useHTFBias or htfBearBias)
 shortLocationOk = inPremium or (not na(eq) and math.abs(close - eq) / close * 100 < 0.10)
 
 //====================================================
@@ -250,13 +319,27 @@ emaSlopeSlow = emaSlow - emaSlow[sniperSlopeLen]
 trendStrongLong  = emaSlopeFast > 0 and emaSlopeSlow > 0
 trendStrongShort = emaSlopeFast < 0 and emaSlopeSlow < 0
 
+longSwingLowCandidate   = ta.lowest(low, swingLookback)
+shortSwingHighCandidate = ta.highest(high, swingLookback)
+
+longRisk  = close - longSwingLowCandidate
+shortRisk = shortSwingHighCandidate - close
+longRR2 = longRisk > syminfo.mintick ? tp2RR : 0.0
+shortRR2 = shortRisk > syminfo.mintick ? tp2RR : 0.0
+longRROk = longRR2 >= minRR
+shortRROk = shortRR2 >= minRR
+
 longConditionBase =
      longContext and
      longLocationOk and
      realPullbackLong and
+     volumeOk and
+     bullMomentumOk and
+     (not useLiquiditySweep or longSweep) and
      breakHigh and
      notTooExtendedLong and
-     strategy.position_size == 0 and
+     longRROk and
+     flat and
      canTrade
 
 shortConditionBase =
@@ -264,9 +347,13 @@ shortConditionBase =
      shortContext and
      shortLocationOk and
      realPullbackShort and
+     volumeOk and
+     bearMomentumOk and
+     (not useLiquiditySweep or shortSweep) and
      breakLow and
      notTooExtendedShort and
-     strategy.position_size == 0 and
+     shortRROk and
+     flat and
      canTrade
 
 longConditionSniper =
@@ -275,9 +362,13 @@ longConditionSniper =
      firstPullbackLong and
      trendStrongLong and
      sniperWindow and
+     volumeOk and
+     bullMomentumOk and
+     (not useLiquiditySweep or longSweep) and
      breakHigh and
      notTooExtendedLong and
-     strategy.position_size == 0 and
+     longRROk and
+     flat and
      canTrade
 
 shortConditionSniper =
@@ -287,9 +378,13 @@ shortConditionSniper =
      firstPullbackShort and
      trendStrongShort and
      sniperWindow and
+     volumeOk and
+     bearMomentumOk and
+     (not useLiquiditySweep or shortSweep) and
      breakLow and
      notTooExtendedShort and
-     strategy.position_size == 0 and
+     shortRROk and
+     flat and
      canTrade
 
 longCondition  = sniperMode ? longConditionSniper  : longConditionBase
@@ -298,63 +393,133 @@ shortCondition = sniperMode ? shortConditionSniper : shortConditionBase
 //====================================================
 // RISK MANAGEMENT
 //====================================================
-longSwingLow   = ta.lowest(low, swingLookback)
-shortSwingHigh = ta.highest(high, swingLookback)
+var float activeLongStop = na
+var float activeLongTP1 = na
+var float activeLongTP2 = na
+var float activeLongRisk = na
 
-longRisk  = close - longSwingLow
-shortRisk = shortSwingHigh - close
+var float activeShortStop = na
+var float activeShortTP1 = na
+var float activeShortTP2 = na
+var float activeShortRisk = na
 
-longTP1 = close + longRisk * tp1RR
-longTP2 = close + longRisk * tp2RR
-shortTP1 = close - shortRisk * tp1RR
-shortTP2 = close - shortRisk * tp2RR
+var bool longBEArmed = false
+var bool shortBEArmed = false
+var string lastSignalText = "Aucun"
 
 //====================================================
 // ORDERS
 //====================================================
 if longCondition and longRisk > syminfo.mintick
+    activeLongStop := longSwingLowCandidate
+    activeLongRisk := longRisk
+    activeLongTP1 := close + longRisk * tp1RR
+    activeLongTP2 := close + longRisk * tp2RR
+    longBEArmed := false
     strategy.entry("LONG", strategy.long)
     lastEntryBar := bar_index
     pullbackUsedLong := true
+    lastSignalText := "LONG"
 
 if shortCondition and shortRisk > syminfo.mintick
+    activeShortStop := shortSwingHighCandidate
+    activeShortRisk := shortRisk
+    activeShortTP1 := close - shortRisk * tp1RR
+    activeShortTP2 := close - shortRisk * tp2RR
+    shortBEArmed := false
     strategy.entry("SHORT", strategy.short)
     lastEntryBar := bar_index
     pullbackUsedShort := true
+    lastSignalText := "SHORT"
 
-strategy.exit("LONG TP1", from_entry="LONG", limit=longTP1, stop=longSwingLow, qty_percent=50)
-strategy.exit("LONG TP2", from_entry="LONG", limit=longTP2, stop=longSwingLow)
+strategy.exit("LONG TP1", from_entry="LONG", limit=activeLongTP1, stop=activeLongStop, qty_percent=50)
+strategy.exit("LONG TP2", from_entry="LONG", limit=activeLongTP2, stop=activeLongStop)
 
-strategy.exit("SHORT TP1", from_entry="SHORT", limit=shortTP1, stop=shortSwingHigh, qty_percent=50)
-strategy.exit("SHORT TP2", from_entry="SHORT", limit=shortTP2, stop=shortSwingHigh)
+strategy.exit("SHORT TP1", from_entry="SHORT", limit=activeShortTP1, stop=activeShortStop, qty_percent=50)
+strategy.exit("SHORT TP2", from_entry="SHORT", limit=activeShortTP2, stop=activeShortStop)
 
 //====================================================
 // BREAK-EVEN
 //====================================================
 if strategy.position_size > 0 and strategy.position_avg_price > 0
-    longTP1Reached = high >= strategy.position_avg_price + (strategy.position_avg_price - longSwingLow) * tp1RR
-    if longTP1Reached
+    longTP1Reached = not na(activeLongRisk) and high >= strategy.position_avg_price + activeLongRisk * tp1RR
+    if longTP1Reached and not longBEArmed
+        longBEArmed := true
         strategy.exit("LONG BE", from_entry="LONG", stop=strategy.position_avg_price)
 
 if strategy.position_size < 0 and strategy.position_avg_price > 0
-    shortTP1Reached = low <= strategy.position_avg_price - (shortSwingHigh - strategy.position_avg_price) * tp1RR
-    if shortTP1Reached
+    shortTP1Reached = not na(activeShortRisk) and low <= strategy.position_avg_price - activeShortRisk * tp1RR
+    if shortTP1Reached and not shortBEArmed
+        shortBEArmed := true
         strategy.exit("SHORT BE", from_entry="SHORT", stop=strategy.position_avg_price)
+
+if positionJustClosed
+    activeLongStop := na
+    activeLongTP1 := na
+    activeLongTP2 := na
+    activeLongRisk := na
+    activeShortStop := na
+    activeShortTP1 := na
+    activeShortTP2 := na
+    activeShortRisk := na
+    longBEArmed := false
+    shortBEArmed := false
+
+//====================================================
+// INFO PANEL
+//====================================================
+var table infoTable = table.new(panelPosition, 2, 7, bgcolor=color.new(color.black, 84), border_width=1, border_color=color.gray)
+
+if showInfoPanel and barstate.islast
+    structureText = structureBias == 1 ? "Haussiere" : structureBias == -1 ? "Baissiere" : "Neutre"
+    structureColor = structureBias == 1 ? color.lime : structureBias == -1 ? color.red : color.yellow
+    zoneText = inPremium ? "Premium" : inDiscount ? "Discount" : "Equilibre"
+    zoneColor = inPremium ? color.red : inDiscount ? color.lime : color.yellow
+    volumeText = volumeOk ? "Confirme" : "Faible"
+    volumeColor = volumeOk ? color.lime : color.gray
+    trendText = bullTrend ? "Bullish" : bearTrend ? "Bearish" : "Mixte"
+    trendColor = bullTrend ? color.lime : bearTrend ? color.red : color.yellow
+    signalText = longCondition ? "LONG" : shortCondition ? "SHORT" : lastSignalText
+    signalColor = longCondition ? color.lime : shortCondition ? color.red : color.gray
+    rsiColor = rsiValue > 70 ? color.red : rsiValue < 30 ? color.lime : color.yellow
+
+    table.cell(infoTable, 0, 0, "Indicateur", text_color=color.white, bgcolor=color.new(color.blue, 65))
+    table.cell(infoTable, 1, 0, "Valeur", text_color=color.white, bgcolor=color.new(color.blue, 65))
+    table.cell(infoTable, 0, 1, showRSIATRInPanel ? "RSI" : "Structure", text_color=color.white)
+    table.cell(infoTable, 1, 1, showRSIATRInPanel ? str.tostring(math.round(rsiValue, 2)) : structureText, text_color=showRSIATRInPanel ? rsiColor : structureColor)
+    table.cell(infoTable, 0, 2, "Zone", text_color=color.white)
+    table.cell(infoTable, 1, 2, zoneText, text_color=zoneColor)
+    table.cell(infoTable, 0, 3, "Trend", text_color=color.white)
+    table.cell(infoTable, 1, 3, trendText, text_color=trendColor)
+    table.cell(infoTable, 0, 4, "Volume", text_color=color.white)
+    table.cell(infoTable, 1, 4, volumeText, text_color=volumeColor)
+    table.cell(infoTable, 0, 5, showRSIATRInPanel ? "ATR" : "Signal", text_color=color.white)
+    table.cell(infoTable, 1, 5, showRSIATRInPanel ? str.tostring(math.round(atrValue, 2)) : signalText, text_color=showRSIATRInPanel ? color.white : signalColor)
+    table.cell(infoTable, 0, 6, "Mode", text_color=color.white)
+    table.cell(infoTable, 1, 6, ultraCleanMode ? "Ultra clean" : sniperMode ? "Sniper" : "Base", text_color=color.aqua)
 
 //====================================================
 // VISUEL BOS / CHOCH
 //====================================================
-if showBOSCHOCH and chochBull
-    label.new(bar_index, high, "CHOCH ↑", style=label.style_label_up, color=color.new(color.lime, 0), textcolor=color.white, size=size.normal)
+if showBOSCHOCH and chochBull and not ultraCleanMode
+    if cleanMode
+        label.new(bar_index, high, "CH", style=label.style_label_up, color=color.new(color.lime, 20), textcolor=color.white, size=size.tiny)
+    else
+        label.new(bar_index, high, "CHOCH ↑", style=label.style_label_up, color=color.new(color.lime, 0), textcolor=color.white, size=size.normal)
 
-if showBOSCHOCH and chochBear
-    label.new(bar_index, low, "CHOCH ↓", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.normal)
+if showBOSCHOCH and chochBear and not ultraCleanMode
+    if cleanMode
+        label.new(bar_index, low, "CH", style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.tiny)
+    else
+        label.new(bar_index, low, "CHOCH ↓", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.normal)
 
 if showBOSCHOCH and bosBull
-    label.new(bar_index, high, "▲", style=label.style_label_up, color=color.new(color.green, 70), textcolor=color.white, size=size.small)
+    if not cleanMode
+        label.new(bar_index, high, "▲", style=label.style_label_up, color=color.new(color.green, 70), textcolor=color.white, size=size.small)
 
 if showBOSCHOCH and bosBear
-    label.new(bar_index, low, "▼", style=label.style_label_down, color=color.new(color.red, 70), textcolor=color.white, size=size.small)
+    if not cleanMode
+        label.new(bar_index, low, "▼", style=label.style_label_down, color=color.new(color.red, 70), textcolor=color.white, size=size.small)
 
 //====================================================
 // ALERTS
@@ -371,7 +536,17 @@ alertcondition(realPullbackShort, title="PULLBACK SHORT READY", message="Pullbac
 //====================================================
 plot(emaFast,  "EMA Rapide", color=color.orange, linewidth=2)
 plot(emaSlow,  "EMA Lente", color=color.blue, linewidth=2)
-plot(emaTrend, "EMA Tendance", color=color.purple, linewidth=2)
+plot(emaTrend, "EMA Tendance", color=color.purple, linewidth=cleanMode ? 1 : 2)
+plotshape(showBOSCHOCH and ultraCleanMode and chochBull, title="CHOCH Bull Ultra Clean", style=shape.triangleup, location=location.belowbar, color=color.new(color.lime, 0), size=size.tiny, text="")
+plotshape(showBOSCHOCH and ultraCleanMode and chochBear, title="CHOCH Bear Ultra Clean", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny, text="")
+plot(showSLTPLevels and strategy.position_size > 0 ? activeLongStop : na, "Long Stop", color=color.new(color.red, cleanMode ? 20 : 0), linewidth=cleanMode ? 1 : 2, style=plot.style_linebr)
+plot(showSLTPLevels and strategy.position_size > 0 ? activeLongTP1 : na, "Long TP1", color=color.new(color.lime, cleanMode ? 15 : 0), linewidth=cleanMode ? 1 : 2, style=plot.style_linebr)
+plot(showSLTPLevels and strategy.position_size > 0 ? activeLongTP2 : na, "Long TP2", color=color.new(color.green, cleanMode ? 60 : 50), linewidth=cleanMode ? 1 : 2, style=plot.style_linebr)
+plot(showSLTPLevels and strategy.position_size < 0 ? activeShortStop : na, "Short Stop", color=color.new(color.red, cleanMode ? 20 : 0), linewidth=cleanMode ? 1 : 2, style=plot.style_linebr)
+plot(showSLTPLevels and strategy.position_size < 0 ? activeShortTP1 : na, "Short TP1", color=color.new(color.lime, cleanMode ? 15 : 0), linewidth=cleanMode ? 1 : 2, style=plot.style_linebr)
+plot(showSLTPLevels and strategy.position_size < 0 ? activeShortTP2 : na, "Short TP2", color=color.new(color.green, cleanMode ? 60 : 50), linewidth=cleanMode ? 1 : 2, style=plot.style_linebr)
 
-plotshape(showSignals and longCondition,  title="Signal Long",  style=shape.triangleup,   location=location.belowbar, color=color.lime, size=size.small, text="LONG")
-plotshape(showSignals and shortCondition, title="Signal Short", style=shape.triangledown, location=location.abovebar, color=color.red,  size=size.small, text="SHORT")
+plotshape(showSignals and longCondition and cleanMode,  title="Signal Long Clean",  style=shape.labelup,   location=location.belowbar, color=color.new(color.lime, 0), textcolor=color.black, size=size.small, text="LONG")
+plotshape(showSignals and longCondition and not cleanMode,  title="Signal Long Full",  style=shape.triangleup,   location=location.belowbar, color=color.lime, size=size.small, text="LONG")
+plotshape(showSignals and shortCondition and cleanMode, title="Signal Short Clean", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), textcolor=color.white, size=size.small, text="SHORT")
+plotshape(showSignals and shortCondition and not cleanMode, title="Signal Short Full", style=shape.triangledown, location=location.abovebar, color=color.red,  size=size.small, text="SHORT")

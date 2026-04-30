@@ -1,0 +1,266 @@
+//@version=5
+indicator("Crypto Swing Pro - Structure EMA RSI Volume Profile", overlay=true, max_labels_count=300, max_lines_count=150)
+
+//====================================================
+// INPUTS
+//====================================================
+tfHTF = input.timeframe("D", "Timeframe tendance HTF")
+ema50Len = input.int(50, "EMA 50", minval=1)
+ema200Len = input.int(200, "EMA 200", minval=1)
+
+rsiLen = input.int(14, "RSI longueur", minval=1)
+rsiBullLevel = input.float(55.0, "RSI bullish min", minval=1, maxval=99, step=0.5)
+rsiBearLevel = input.float(45.0, "RSI bearish max", minval=1, maxval=99, step=0.5)
+rsiOverbought = input.float(70.0, "RSI surachat", minval=1, maxval=99, step=0.5)
+rsiOversold = input.float(30.0, "RSI survente", minval=1, maxval=99, step=0.5)
+
+pivotLen = input.int(5, "Force pivots HH/HL/LH/LL", minval=2)
+atrLen = input.int(14, "ATR longueur", minval=1)
+atrStopMult = input.float(1.8, "Stop ATR x", minval=0.1, step=0.1)
+rrTarget = input.float(2.5, "Objectif RR", minval=0.5, step=0.1)
+
+useVolumeFilter = input.bool(true, "Filtrer par volume")
+volumeLen = input.int(30, "Moyenne volume", minval=1)
+volumeMult = input.float(1.15, "Volume minimum x moyenne", minval=0.1, step=0.05)
+
+showSignals = input.bool(true, "Afficher signaux Swing")
+showStructure = input.bool(true, "Afficher HH/HL/LH/LL")
+showBOSCHOCH = input.bool(true, "Afficher BOS / CHOCH")
+showRiskLevels = input.bool(true, "Afficher zones entree / stop / objectif")
+showInfoPanel = input.bool(true, "Afficher panneau decision")
+showVP = input.bool(true, "Afficher Volume Profile")
+vpLookback = input.int(160, "Volume Profile lookback", minval=50, maxval=500)
+vpRows = input.int(28, "Volume Profile lignes", minval=10, maxval=80)
+vpValueArea = input.int(70, "Volume Profile value area %", minval=50, maxval=95)
+
+//====================================================
+// CORE INDICATORS
+//====================================================
+ema50 = ta.ema(close, ema50Len)
+ema200 = ta.ema(close, ema200Len)
+rsi = ta.rsi(close, rsiLen)
+atr = ta.atr(atrLen)
+volMa = ta.sma(volume, volumeLen)
+volumeOk = not useVolumeFilter or volume > volMa * volumeMult
+
+htfClose = request.security(syminfo.tickerid, tfHTF, close)
+htfEma50 = request.security(syminfo.tickerid, tfHTF, ta.ema(close, ema50Len))
+htfEma200 = request.security(syminfo.tickerid, tfHTF, ta.ema(close, ema200Len))
+
+localBull = close > ema200 and ema50 > ema200
+localBear = close < ema200 and ema50 < ema200
+htfBull = htfClose > htfEma200 and htfEma50 > htfEma200
+htfBear = htfClose < htfEma200 and htfEma50 < htfEma200
+
+//====================================================
+// MARKET STRUCTURE
+//====================================================
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+var float prevHighPivot = na
+var float prevLowPivot = na
+var float lastHighPivot = na
+var float lastLowPivot = na
+var int structureBias = 0
+
+hh = not na(ph) and not na(prevHighPivot) and ph > prevHighPivot
+lh = not na(ph) and not na(prevHighPivot) and ph <= prevHighPivot
+hl = not na(pl) and not na(prevLowPivot) and pl > prevLowPivot
+ll = not na(pl) and not na(prevLowPivot) and pl <= prevLowPivot
+
+if not na(ph)
+    lastHighPivot := ph
+    prevHighPivot := ph
+
+if not na(pl)
+    lastLowPivot := pl
+    prevLowPivot := pl
+
+bullBreak = not na(lastHighPivot) and close > lastHighPivot and close[1] <= lastHighPivot
+bearBreak = not na(lastLowPivot) and close < lastLowPivot and close[1] >= lastLowPivot
+
+chochBull = bullBreak and structureBias <= 0
+chochBear = bearBreak and structureBias >= 0
+bosBull = bullBreak and structureBias == 1
+bosBear = bearBreak and structureBias == -1
+
+if chochBull or bosBull
+    structureBias := 1
+
+if chochBear or bosBear
+    structureBias := -1
+
+//====================================================
+// SWING SETUPS
+//====================================================
+nearEma50 = math.abs(close - ema50) / close * 100 <= 2.0
+pullbackLong = structureBias == 1 and localBull and close > ema50 and low <= ema50 and rsi >= rsiBullLevel
+pullbackShort = structureBias == -1 and localBear and close < ema50 and high >= ema50 and rsi <= rsiBearLevel
+
+breakoutLong = bullBreak and localBull and htfBull and rsi >= rsiBullLevel and volumeOk
+breakoutShort = bearBreak and localBear and htfBear and rsi <= rsiBearLevel and volumeOk
+
+longSignal = barstate.isconfirmed and htfBull and volumeOk and (pullbackLong or breakoutLong) and rsi < rsiOverbought
+shortSignal = barstate.isconfirmed and htfBear and volumeOk and (pullbackShort or breakoutShort) and rsi > rsiOversold
+
+longStop = close - atr * atrStopMult
+longTarget = close + (close - longStop) * rrTarget
+shortStop = close + atr * atrStopMult
+shortTarget = close - (shortStop - close) * rrTarget
+
+var float activeEntry = na
+var float activeStop = na
+var float activeTarget = na
+var int activeDirection = 0
+
+if longSignal
+    activeEntry := close
+    activeStop := longStop
+    activeTarget := longTarget
+    activeDirection := 1
+
+if shortSignal
+    activeEntry := close
+    activeStop := shortStop
+    activeTarget := shortTarget
+    activeDirection := -1
+
+if activeDirection == 1 and (low <= activeStop or high >= activeTarget)
+    activeDirection := 0
+
+if activeDirection == -1 and (high >= activeStop or low <= activeTarget)
+    activeDirection := 0
+
+//====================================================
+// VOLUME PROFILE
+//====================================================
+var line pocLine = na
+var line vahLine = na
+var line valLine = na
+var label pocLabel = na
+var float vpPoc = na
+var float vpVah = na
+var float vpVal = na
+
+if showVP and barstate.islast
+    line.delete(pocLine)
+    line.delete(vahLine)
+    line.delete(valLine)
+    label.delete(pocLabel)
+
+    vpHigh = ta.highest(high, vpLookback)
+    vpLow = ta.lowest(low, vpLookback)
+    vpStep = math.max((vpHigh - vpLow) / vpRows, syminfo.mintick)
+    volumeByRow = array.new_float(vpRows, 0.0)
+    totalProfileVolume = 0.0
+
+    for i = 0 to vpLookback - 1
+        rowRaw = int(math.floor((close[i] - vpLow) / vpStep))
+        row = math.max(0, math.min(vpRows - 1, rowRaw))
+        rowVolume = array.get(volumeByRow, row) + volume[i]
+        array.set(volumeByRow, row, rowVolume)
+        totalProfileVolume += volume[i]
+
+    pocRow = 0
+    pocVolume = array.get(volumeByRow, 0)
+    for row = 1 to vpRows - 1
+        currentVolume = array.get(volumeByRow, row)
+        if currentVolume > pocVolume
+            pocVolume := currentVolume
+            pocRow := row
+
+    valueTarget = totalProfileVolume * vpValueArea / 100.0
+    valueVolume = pocVolume
+    lowerRow = pocRow
+    upperRow = pocRow
+
+    while valueVolume < valueTarget and (lowerRow > 0 or upperRow < vpRows - 1)
+        lowerVolume = lowerRow > 0 ? array.get(volumeByRow, lowerRow - 1) : -1.0
+        upperVolume = upperRow < vpRows - 1 ? array.get(volumeByRow, upperRow + 1) : -1.0
+        if upperVolume >= lowerVolume and upperRow < vpRows - 1
+            upperRow += 1
+            valueVolume += upperVolume
+        else if lowerRow > 0
+            lowerRow -= 1
+            valueVolume += lowerVolume
+        else
+            upperRow += 1
+            valueVolume += upperVolume
+
+    vpPoc := vpLow + (pocRow + 0.5) * vpStep
+    vpVah := vpLow + (upperRow + 1.0) * vpStep
+    vpVal := vpLow + lowerRow * vpStep
+
+    pocLine := line.new(bar_index - vpLookback, vpPoc, bar_index, vpPoc, extend=extend.right, color=color.new(color.yellow, 0), width=2)
+    vahLine := line.new(bar_index - vpLookback, vpVah, bar_index, vpVah, extend=extend.right, color=color.new(color.teal, 15), width=1, style=line.style_dashed)
+    valLine := line.new(bar_index - vpLookback, vpVal, bar_index, vpVal, extend=extend.right, color=color.new(color.teal, 15), width=1, style=line.style_dashed)
+    pocLabel := label.new(bar_index, vpPoc, "POC", style=label.style_label_left, color=color.new(color.yellow, 0), textcolor=color.black, size=size.tiny)
+
+//====================================================
+// VISUALS
+//====================================================
+plot(ema50, "EMA 50", color=color.new(color.orange, 0), linewidth=2)
+plot(ema200, "EMA 200", color=color.new(color.purple, 0), linewidth=2)
+
+bgcolor(htfBull ? color.new(color.green, 94) : htfBear ? color.new(color.red, 94) : na)
+barcolor(localBull and rsi >= rsiBullLevel ? color.new(color.lime, 72) : localBear and rsi <= rsiBearLevel ? color.new(color.red, 72) : na)
+
+plotshape(showStructure and hh, "HH", style=shape.labeldown, location=location.abovebar, offset=-pivotLen, color=color.new(color.green, 0), text="HH", textcolor=color.white, size=size.tiny)
+plotshape(showStructure and lh, "LH", style=shape.labeldown, location=location.abovebar, offset=-pivotLen, color=color.new(color.orange, 0), text="LH", textcolor=color.white, size=size.tiny)
+plotshape(showStructure and hl, "HL", style=shape.labelup, location=location.belowbar, offset=-pivotLen, color=color.new(color.teal, 0), text="HL", textcolor=color.white, size=size.tiny)
+plotshape(showStructure and ll, "LL", style=shape.labelup, location=location.belowbar, offset=-pivotLen, color=color.new(color.red, 0), text="LL", textcolor=color.white, size=size.tiny)
+
+plotshape(showBOSCHOCH and chochBull, "CHOCH Bull", style=shape.labelup, location=location.belowbar, color=color.new(color.lime, 0), text="CHOCH", textcolor=color.white, size=size.small)
+plotshape(showBOSCHOCH and chochBear, "CHOCH Bear", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), text="CHOCH", textcolor=color.white, size=size.small)
+plotshape(showBOSCHOCH and bosBull, "BOS Bull", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), text="BOS", textcolor=color.white, size=size.tiny)
+plotshape(showBOSCHOCH and bosBear, "BOS Bear", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), text="BOS", textcolor=color.white, size=size.tiny)
+
+plotshape(showSignals and longSignal, "Swing LONG", style=shape.triangleup, location=location.belowbar, color=color.lime, text="SWING\nLONG", textcolor=color.white, size=size.normal)
+plotshape(showSignals and shortSignal, "Swing SHORT", style=shape.triangledown, location=location.abovebar, color=color.red, text="SWING\nSHORT", textcolor=color.white, size=size.normal)
+
+plot(showRiskLevels and activeDirection != 0 ? activeEntry : na, "Entree active", color=color.new(color.white, 0), linewidth=1, style=plot.style_linebr)
+plot(showRiskLevels and activeDirection != 0 ? activeStop : na, "Stop actif", color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
+plot(showRiskLevels and activeDirection != 0 ? activeTarget : na, "Objectif actif", color=color.new(color.lime, 0), linewidth=2, style=plot.style_linebr)
+
+//====================================================
+// INFO PANEL
+//====================================================
+var table panel = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 82), border_width=1, border_color=color.new(color.gray, 35))
+
+if showInfoPanel and barstate.islast
+    trendTxt = htfBull and localBull ? "Bullish" : htfBear and localBear ? "Bearish" : "Neutre / Mixte"
+    trendCol = trendTxt == "Bullish" ? color.lime : trendTxt == "Bearish" ? color.red : color.yellow
+    structureTxt = structureBias == 1 ? "HH/HL haussier" : structureBias == -1 ? "LH/LL baissier" : "Neutre"
+    structureCol = structureBias == 1 ? color.lime : structureBias == -1 ? color.red : color.yellow
+    rsiTxt = str.tostring(math.round(rsi, 1))
+    rsiCol = rsi >= rsiOverbought ? color.red : rsi <= rsiOversold ? color.lime : rsi >= rsiBullLevel ? color.lime : rsi <= rsiBearLevel ? color.red : color.yellow
+    volTxt = volumeOk ? "Confirme" : "Faible"
+    volCol = volumeOk ? color.lime : color.gray
+    signalTxt = longSignal ? "LONG" : shortSignal ? "SHORT" : activeDirection == 1 ? "Long actif" : activeDirection == -1 ? "Short actif" : "Attente"
+    signalCol = longSignal or activeDirection == 1 ? color.lime : shortSignal or activeDirection == -1 ? color.red : color.gray
+
+    table.cell(panel, 0, 0, "Crypto Swing Pro", text_color=color.white, bgcolor=color.new(color.blue, 55))
+    table.cell(panel, 1, 0, syminfo.ticker, text_color=color.white, bgcolor=color.new(color.blue, 55))
+    table.cell(panel, 0, 1, "Tendance", text_color=color.white)
+    table.cell(panel, 1, 1, trendTxt, text_color=trendCol)
+    table.cell(panel, 0, 2, "Structure", text_color=color.white)
+    table.cell(panel, 1, 2, structureTxt, text_color=structureCol)
+    table.cell(panel, 0, 3, "RSI", text_color=color.white)
+    table.cell(panel, 1, 3, rsiTxt, text_color=rsiCol)
+    table.cell(panel, 0, 4, "Volume", text_color=color.white)
+    table.cell(panel, 1, 4, volTxt, text_color=volCol)
+    table.cell(panel, 0, 5, "EMA 50/200", text_color=color.white)
+    table.cell(panel, 1, 5, ema50 > ema200 ? "50 > 200" : "50 < 200", text_color=ema50 > ema200 ? color.lime : color.red)
+    table.cell(panel, 0, 6, "Signal", text_color=color.white)
+    table.cell(panel, 1, 6, signalTxt, text_color=signalCol)
+    table.cell(panel, 0, 7, "HTF", text_color=color.white)
+    table.cell(panel, 1, 7, tfHTF, text_color=color.aqua)
+
+//====================================================
+// ALERTS
+//====================================================
+alertcondition(longSignal, title="Crypto Swing Pro LONG", message="Signal SWING LONG sur {{ticker}}")
+alertcondition(shortSignal, title="Crypto Swing Pro SHORT", message="Signal SWING SHORT sur {{ticker}}")
+alertcondition(chochBull, title="Crypto Swing Pro CHOCH Bull", message="CHOCH haussier sur {{ticker}}")
+alertcondition(chochBear, title="Crypto Swing Pro CHOCH Bear", message="CHOCH baissier sur {{ticker}}")
