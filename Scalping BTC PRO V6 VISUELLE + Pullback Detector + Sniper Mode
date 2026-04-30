@@ -74,6 +74,34 @@ sniperBarsWindow  = input.int(10, "Fenêtre max après CHOCH", minval=1)
 sniperSlopeLen    = input.int(3, "Pente EMA lookback", minval=1)
 
 //====================================================
+// GUIDE D'ENTREE VISUEL
+//====================================================
+// Les petits points verts/rouges ne sont pas des entrees directes.
+// Ils indiquent seulement un pullback detecte: prepare-toi.
+//
+// Le vrai signal d'entree est le label LONG ou SHORT.
+//
+// Repere visuel:
+// - Petit point vert/rouge = pullback potentiel.
+// - Petit triangle vert/rouge = CHOCH / changement de structure.
+// - Label vert LONG = entree long validee par la strategie.
+// - Label rouge SHORT = entree short validee par la strategie.
+//
+// Entree Long:
+// 1. CHOCH haussier ou structure haussiere.
+// 2. Pullback vers EMA 9/21.
+// 3. Prix repart au-dessus de l'EMA rapide.
+// 4. Volume, RSI, session, HTF et sweep valident.
+// 5. Le script affiche LONG.
+//
+// Entree Short:
+// 1. CHOCH baissier ou structure baissiere.
+// 2. Pullback vers EMA 9/21.
+// 3. Prix rejette l'EMA rapide vers le bas.
+// 4. Volume, RSI, session, HTF et sweep valident.
+// 5. Le script affiche SHORT.
+
+//====================================================
 // EMA / DMI
 //====================================================
 emaFast  = ta.ema(close, emaFastLen)
