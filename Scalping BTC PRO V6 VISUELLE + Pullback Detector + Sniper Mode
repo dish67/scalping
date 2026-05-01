@@ -6,7 +6,8 @@ strategy("Scalping BTC PRO V6 VISUELLE + Pullback Detector + Sniper Mode",
      default_qty_value=10,
      pyramiding=0,
      commission_type=strategy.commission.percent,
-     commission_value=0.04)
+     commission_value=0.04,
+     max_labels_count=500)
 
 //====================================================
 // INPUTS
@@ -36,7 +37,8 @@ maxSlowDistPct    = input.float(0.60, "Distance max EMA lente (%)", step=0.01)
 rangeLookback     = input.int(10, "Lookback anti-range", minval=2)
 rangeThresholdPct = input.float(0.20, "Seuil range (%)", step=0.01)
 
-showStructure     = input.bool(false, "Afficher HH/HL/LH/LL")
+showStructure     = input.bool(true, "Afficher HH/HL/LH/LL")
+showStructureSequence = input.bool(true, "Afficher sequence HH-HL / LH-LL")
 showPDZones       = input.bool(false, "Afficher Premium / Discount")
 showRangeBg       = input.bool(true, "Colorer range")
 showShorts        = input.bool(true, "Activer shorts")
@@ -163,29 +165,71 @@ var float prevLowPivot  = na
 var float lastHighPivot = na
 var float lastLowPivot  = na
 var label[] structureLabels = array.new_label()
+var label[] structureSequenceLabels = array.new_label()
+var string[] structureSequence = array.new_string()
 
-showStructureVisual = showStructure and not ultraCleanMode
+showStructureVisual = showStructure
 showPDZonesVisual = showPDZones and not ultraCleanMode
 
 if not na(ph)
+    txtH = na(prevHighPivot) ? "H" : (ph > prevHighPivot ? "HH" : "LH")
     if showStructureVisual
-        txtH = na(prevHighPivot) ? "H" : (ph > prevHighPivot ? "HH" : "LH")
         colH = na(prevHighPivot) ? color.gray : (ph > prevHighPivot ? color.new(color.green, 0) : color.new(color.orange, 0))
         newLabel = label.new(bar_index - pivotLen, ph, txtH, style=label.style_label_down, textcolor=color.white, color=colH, size=structureRecentOnly ? size.tiny : size.small)
         array.push(structureLabels, newLabel)
         if structureRecentOnly and array.size(structureLabels) > maxStructureLabels
             label.delete(array.shift(structureLabels))
+    if txtH == "HH" or txtH == "LH"
+        array.push(structureSequence, txtH)
+        if array.size(structureSequence) > 4
+            array.shift(structureSequence)
+        bullStructureSequence = false
+        bearStructureSequence = false
+        if array.size(structureSequence) == 4
+            seq0 = array.get(structureSequence, 0)
+            seq1 = array.get(structureSequence, 1)
+            seq2 = array.get(structureSequence, 2)
+            seq3 = array.get(structureSequence, 3)
+            bullStructureSequence := seq0 == "HH" and seq1 == "HL" and seq2 == "HH" and seq3 == "HL"
+            bearStructureSequence := seq0 == "LH" and seq1 == "LL" and seq2 == "LH" and seq3 == "LL"
+        if showStructureVisual and showStructureSequence and (bullStructureSequence or bearStructureSequence)
+            sequenceText = bullStructureSequence ? "HH-HL-HH-HL" : "LH-LL-LH-LL"
+            sequenceColor = bullStructureSequence ? color.new(color.lime, 0) : color.new(color.red, 0)
+            sequenceLabel = label.new(bar_index - pivotLen, ph, sequenceText, style=label.style_label_down, textcolor=color.white, color=sequenceColor, size=size.small)
+            array.push(structureSequenceLabels, sequenceLabel)
+            if structureRecentOnly and array.size(structureSequenceLabels) > maxStructureLabels
+                label.delete(array.shift(structureSequenceLabels))
     prevHighPivot := ph
     lastHighPivot := ph
 
 if not na(pl)
+    txtL = na(prevLowPivot) ? "L" : (pl > prevLowPivot ? "HL" : "LL")
     if showStructureVisual
-        txtL = na(prevLowPivot) ? "L" : (pl > prevLowPivot ? "HL" : "LL")
         colL = na(prevLowPivot) ? color.gray : (pl > prevLowPivot ? color.new(color.teal, 0) : color.new(color.red, 0))
         newLabel = label.new(bar_index - pivotLen, pl, txtL, style=label.style_label_up, textcolor=color.white, color=colL, size=structureRecentOnly ? size.tiny : size.small)
         array.push(structureLabels, newLabel)
         if structureRecentOnly and array.size(structureLabels) > maxStructureLabels
             label.delete(array.shift(structureLabels))
+    if txtL == "HL" or txtL == "LL"
+        array.push(structureSequence, txtL)
+        if array.size(structureSequence) > 4
+            array.shift(structureSequence)
+        bullStructureSequence = false
+        bearStructureSequence = false
+        if array.size(structureSequence) == 4
+            seq0 = array.get(structureSequence, 0)
+            seq1 = array.get(structureSequence, 1)
+            seq2 = array.get(structureSequence, 2)
+            seq3 = array.get(structureSequence, 3)
+            bullStructureSequence := seq0 == "HH" and seq1 == "HL" and seq2 == "HH" and seq3 == "HL"
+            bearStructureSequence := seq0 == "LH" and seq1 == "LL" and seq2 == "LH" and seq3 == "LL"
+        if showStructureVisual and showStructureSequence and (bullStructureSequence or bearStructureSequence)
+            sequenceText = bullStructureSequence ? "HH-HL-HH-HL" : "LH-LL-LH-LL"
+            sequenceColor = bullStructureSequence ? color.new(color.lime, 0) : color.new(color.red, 0)
+            sequenceLabel = label.new(bar_index - pivotLen, pl, sequenceText, style=label.style_label_up, textcolor=color.white, color=sequenceColor, size=size.small)
+            array.push(structureSequenceLabels, sequenceLabel)
+            if structureRecentOnly and array.size(structureSequenceLabels) > maxStructureLabels
+                label.delete(array.shift(structureSequenceLabels))
     prevLowPivot := pl
     lastLowPivot := pl
 
@@ -495,6 +539,13 @@ blockerText =
 setupColor = longCondition or setupText == "PB Long" or setupText == "Surveille Long" ? color.lime : shortCondition or setupText == "PB Short" or setupText == "Surveille Short" ? color.red : color.gray
 blockerColor = blockerText == "OK" ? color.lime : blockerText == "Pas de setup" ? color.gray : color.orange
 modeText = sniperMode and ultraCleanMode ? "Sniper + Ultra" : sniperMode ? "Sniper" : ultraCleanMode ? "Ultra clean" : "Base"
+signalPanelText =
+     longCondition ? "LONG" :
+     shortCondition ? "SHORT" :
+     preferLong ? (longPbOk ? "Long PB" : "Long possible") :
+     preferShort ? (shortPbOk ? "Short PB" : "Short possible") :
+     "Aucun"
+signalPanelColor = longCondition or preferLong ? color.lime : shortCondition or preferShort ? color.red : color.gray
 
 //====================================================
 // RISK MANAGEMENT
@@ -512,6 +563,11 @@ var float activeShortRisk = na
 var bool longBEArmed = false
 var bool shortBEArmed = false
 var string lastSignalText = "Aucun"
+var color lastSignalColor = color.gray
+
+if signalPanelText != "Aucun"
+    lastSignalText := signalPanelText
+    lastSignalColor := signalPanelColor
 
 //====================================================
 // ORDERS
@@ -526,6 +582,7 @@ if longCondition and longRisk > syminfo.mintick
     lastEntryBar := bar_index
     pullbackUsedLong := true
     lastSignalText := "LONG"
+    lastSignalColor := color.lime
 
 if shortCondition and shortRisk > syminfo.mintick
     activeShortStop := shortSwingHighCandidate
@@ -537,6 +594,7 @@ if shortCondition and shortRisk > syminfo.mintick
     lastEntryBar := bar_index
     pullbackUsedShort := true
     lastSignalText := "SHORT"
+    lastSignalColor := color.red
 
 strategy.exit("LONG TP1", from_entry="LONG", limit=activeLongTP1, stop=activeLongStop, qty_percent=50)
 strategy.exit("LONG TP2", from_entry="LONG", limit=activeLongTP2, stop=activeLongStop)
@@ -587,8 +645,8 @@ if drawInfoPanel
     volumeColor = volumeOk ? color.lime : color.gray
     trendText = bullTrend ? "Bullish" : bearTrend ? "Bearish" : "Mixte"
     trendColor = bullTrend ? color.lime : bearTrend ? color.red : color.yellow
-    signalText = longCondition ? "LONG" : shortCondition ? "SHORT" : lastSignalText
-    signalColor = longCondition ? color.lime : shortCondition ? color.red : color.gray
+    signalText = signalPanelText != "Aucun" ? signalPanelText : lastSignalText
+    signalColor = signalPanelText != "Aucun" ? signalPanelColor : lastSignalColor
     rsiColor = rsiValue > 70 ? color.red : rsiValue < 30 ? color.lime : color.yellow
 
     table.cell(infoTable, 0, 0, "Indicateur", text_color=color.white, bgcolor=color.new(color.blue, 65))
