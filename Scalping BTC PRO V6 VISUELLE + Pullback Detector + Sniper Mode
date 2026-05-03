@@ -6,8 +6,7 @@ strategy("Scalping BTC PRO V6 VISUELLE + Pullback Detector + Sniper Mode",
      default_qty_value=10,
      pyramiding=0,
      commission_type=strategy.commission.percent,
-     commission_value=0.04,
-     max_labels_count=500)
+     commission_value=0.04)
 
 //====================================================
 // INPUTS
@@ -52,7 +51,7 @@ ultraCleanMode    = input.bool(true, "Mode ultra clean 5M")
 showRSIATRInPanel = input.bool(false, "Afficher RSI / ATR dans panneau")
 showOnlySniperPB  = input.bool(true, "PB seulement en mode sniper")
 structureRecentOnly = input.bool(true, "Structure recente seulement")
-maxStructureLabels = input.int(8, "Max labels structure", minval=2, maxval=50)
+structureLookbackBars = input.int(300, "Lookback structure visuelle", minval=50, maxval=5000)
 panelCorner       = input.string("Top Right", "Position panneau", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"])
 useVolumeFilter   = input.bool(true, "Filtre volume")
 volumeMaLen       = input.int(20, "Moyenne volume", minval=1)
@@ -111,10 +110,7 @@ sniperSlopeLen    = input.int(3, "Pente EMA lookback", minval=1)
 emaFast  = ta.ema(close, emaFastLen)
 emaSlow  = ta.ema(close, emaSlowLen)
 emaTrend = ta.ema(close, emaTrendLen)
-hftClose = request.security(syminfo.tickerid, htfTimeframe, close)
-htfEmaFast = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, emaFastLen))
-htfEmaSlow = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, emaSlowLen))
-htfEmaTrend = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, emaTrendLen))
+[hftClose, htfEmaFast, htfEmaSlow, htfEmaTrend] = request.security(syminfo.tickerid, htfTimeframe, [close, ta.ema(close, emaFastLen), ta.ema(close, emaSlowLen), ta.ema(close, emaTrendLen)])
 rsiValue = ta.rsi(close, rsiLen)
 atrValue = ta.atr(atrLen)
 volumeMa = ta.sma(volume, volumeMaLen)
@@ -164,74 +160,59 @@ var float prevHighPivot = na
 var float prevLowPivot  = na
 var float lastHighPivot = na
 var float lastLowPivot  = na
-var label[] structureLabels = array.new_label()
-var label[] structureSequenceLabels = array.new_label()
-var string[] structureSequence = array.new_string()
+var int structureSeq1 = 0
+var int structureSeq2 = 0
+var int structureSeq3 = 0
+var int structureSeq4 = 0
 
 showStructureVisual = showStructure
 showPDZonesVisual = showPDZones and not ultraCleanMode
+structureVisualBar = not structureRecentOnly or bar_index >= last_bar_index - structureLookbackBars
 
-if not na(ph)
-    txtH = na(prevHighPivot) ? "H" : (ph > prevHighPivot ? "HH" : "LH")
-    if showStructureVisual
-        colH = na(prevHighPivot) ? color.gray : (ph > prevHighPivot ? color.new(color.green, 0) : color.new(color.orange, 0))
-        newLabel = label.new(bar_index - pivotLen, ph, txtH, style=label.style_label_down, textcolor=color.white, color=colH, size=structureRecentOnly ? size.tiny : size.small)
-        array.push(structureLabels, newLabel)
-        if structureRecentOnly and array.size(structureLabels) > maxStructureLabels
-            label.delete(array.shift(structureLabels))
-    if txtH == "HH" or txtH == "LH"
-        array.push(structureSequence, txtH)
-        if array.size(structureSequence) > 4
-            array.shift(structureSequence)
-        bullStructureSequence = false
-        bearStructureSequence = false
-        if array.size(structureSequence) == 4
-            seq0 = array.get(structureSequence, 0)
-            seq1 = array.get(structureSequence, 1)
-            seq2 = array.get(structureSequence, 2)
-            seq3 = array.get(structureSequence, 3)
-            bullStructureSequence := seq0 == "HH" and seq1 == "HL" and seq2 == "HH" and seq3 == "HL"
-            bearStructureSequence := seq0 == "LH" and seq1 == "LL" and seq2 == "LH" and seq3 == "LL"
-        if showStructureVisual and showStructureSequence and (bullStructureSequence or bearStructureSequence)
-            sequenceText = bullStructureSequence ? "HH-HL-HH-HL" : "LH-LL-LH-LL"
-            sequenceColor = bullStructureSequence ? color.new(color.lime, 0) : color.new(color.red, 0)
-            sequenceLabel = label.new(bar_index - pivotLen, ph, sequenceText, style=label.style_label_down, textcolor=color.white, color=sequenceColor, size=size.small)
-            array.push(structureSequenceLabels, sequenceLabel)
-            if structureRecentOnly and array.size(structureSequenceLabels) > maxStructureLabels
-                label.delete(array.shift(structureSequenceLabels))
+highPivotReady = not na(ph)
+lowPivotReady = not na(pl)
+
+firstHighSignal = highPivotReady and na(prevHighPivot)
+hhSignal = highPivotReady and not na(prevHighPivot) and ph > prevHighPivot
+lhSignal = highPivotReady and not na(prevHighPivot) and ph <= prevHighPivot
+
+firstLowSignal = lowPivotReady and na(prevLowPivot)
+hlSignal = lowPivotReady and not na(prevLowPivot) and pl > prevLowPivot
+llSignal = lowPivotReady and not na(prevLowPivot) and pl <= prevLowPivot
+
+bullStructureSequence = false
+bearStructureSequence = false
+
+if highPivotReady
+    if hhSignal or lhSignal
+        structureSeq1 := structureSeq2
+        structureSeq2 := structureSeq3
+        structureSeq3 := structureSeq4
+        structureSeq4 := hhSignal ? 1 : -1
+        bullStructureSequence := bullStructureSequence or (structureSeq1 == 1 and structureSeq2 == 2 and structureSeq3 == 1 and structureSeq4 == 2)
+        bearStructureSequence := bearStructureSequence or (structureSeq1 == -1 and structureSeq2 == -2 and structureSeq3 == -1 and structureSeq4 == -2)
     prevHighPivot := ph
     lastHighPivot := ph
 
-if not na(pl)
-    txtL = na(prevLowPivot) ? "L" : (pl > prevLowPivot ? "HL" : "LL")
-    if showStructureVisual
-        colL = na(prevLowPivot) ? color.gray : (pl > prevLowPivot ? color.new(color.teal, 0) : color.new(color.red, 0))
-        newLabel = label.new(bar_index - pivotLen, pl, txtL, style=label.style_label_up, textcolor=color.white, color=colL, size=structureRecentOnly ? size.tiny : size.small)
-        array.push(structureLabels, newLabel)
-        if structureRecentOnly and array.size(structureLabels) > maxStructureLabels
-            label.delete(array.shift(structureLabels))
-    if txtL == "HL" or txtL == "LL"
-        array.push(structureSequence, txtL)
-        if array.size(structureSequence) > 4
-            array.shift(structureSequence)
-        bullStructureSequence = false
-        bearStructureSequence = false
-        if array.size(structureSequence) == 4
-            seq0 = array.get(structureSequence, 0)
-            seq1 = array.get(structureSequence, 1)
-            seq2 = array.get(structureSequence, 2)
-            seq3 = array.get(structureSequence, 3)
-            bullStructureSequence := seq0 == "HH" and seq1 == "HL" and seq2 == "HH" and seq3 == "HL"
-            bearStructureSequence := seq0 == "LH" and seq1 == "LL" and seq2 == "LH" and seq3 == "LL"
-        if showStructureVisual and showStructureSequence and (bullStructureSequence or bearStructureSequence)
-            sequenceText = bullStructureSequence ? "HH-HL-HH-HL" : "LH-LL-LH-LL"
-            sequenceColor = bullStructureSequence ? color.new(color.lime, 0) : color.new(color.red, 0)
-            sequenceLabel = label.new(bar_index - pivotLen, pl, sequenceText, style=label.style_label_up, textcolor=color.white, color=sequenceColor, size=size.small)
-            array.push(structureSequenceLabels, sequenceLabel)
-            if structureRecentOnly and array.size(structureSequenceLabels) > maxStructureLabels
-                label.delete(array.shift(structureSequenceLabels))
+if lowPivotReady
+    if hlSignal or llSignal
+        structureSeq1 := structureSeq2
+        structureSeq2 := structureSeq3
+        structureSeq3 := structureSeq4
+        structureSeq4 := hlSignal ? 2 : -2
+        bullStructureSequence := bullStructureSequence or (structureSeq1 == 1 and structureSeq2 == 2 and structureSeq3 == 1 and structureSeq4 == 2)
+        bearStructureSequence := bearStructureSequence or (structureSeq1 == -1 and structureSeq2 == -2 and structureSeq3 == -1 and structureSeq4 == -2)
     prevLowPivot := pl
     lastLowPivot := pl
+
+plotshape(showStructureVisual and structureVisualBar and firstHighSignal, title="Structure H", style=shape.labeldown, location=location.abovebar, color=color.gray, text="H", textcolor=color.white, size=size.tiny, offset=-pivotLen)
+plotshape(showStructureVisual and structureVisualBar and hhSignal, title="Structure HH", style=shape.labeldown, location=location.abovebar, color=color.new(color.green, 0), text="HH", textcolor=color.white, size=size.tiny, offset=-pivotLen)
+plotshape(showStructureVisual and structureVisualBar and lhSignal, title="Structure LH", style=shape.labeldown, location=location.abovebar, color=color.new(color.orange, 0), text="LH", textcolor=color.white, size=size.tiny, offset=-pivotLen)
+plotshape(showStructureVisual and structureVisualBar and firstLowSignal, title="Structure L", style=shape.labelup, location=location.belowbar, color=color.gray, text="L", textcolor=color.white, size=size.tiny, offset=-pivotLen)
+plotshape(showStructureVisual and structureVisualBar and hlSignal, title="Structure HL", style=shape.labelup, location=location.belowbar, color=color.new(color.teal, 0), text="HL", textcolor=color.white, size=size.tiny, offset=-pivotLen)
+plotshape(showStructureVisual and structureVisualBar and llSignal, title="Structure LL", style=shape.labelup, location=location.belowbar, color=color.new(color.red, 0), text="LL", textcolor=color.white, size=size.tiny, offset=-pivotLen)
+plotshape(showStructureVisual and showStructureSequence and structureVisualBar and bullStructureSequence, title="Sequence HH-HL-HH-HL", style=shape.labelup, location=location.belowbar, color=color.new(color.lime, 0), text="HH-HL-HH-HL", textcolor=color.black, size=size.small, offset=-pivotLen)
+plotshape(showStructureVisual and showStructureSequence and structureVisualBar and bearStructureSequence, title="Sequence LH-LL-LH-LL", style=shape.labelup, location=location.belowbar, color=color.new(color.red, 0), text="LH-LL-LH-LL", textcolor=color.white, size=size.small, offset=-pivotLen)
 
 //====================================================
 // MARKET STRUCTURE STATE + CHOCH / BOS
@@ -290,6 +271,7 @@ eq = not na(dealingHigh) and not na(dealingLow) ? (dealingHigh + dealingLow) / 2
 
 inDiscount = not na(eq) and close < eq
 inPremium  = not na(eq) and close > eq
+nearEquilibrium = not na(eq) and math.abs(close - eq) / close * 100 < 0.10
 
 plot(showPDZonesVisual ? dealingHigh : na, "Premium High", color=color.new(color.red, 70), linewidth=1, style=plot.style_linebr)
 plot(showPDZonesVisual ? dealingLow  : na, "Discount Low", color=color.new(color.green, 70), linewidth=1, style=plot.style_linebr)
@@ -379,10 +361,10 @@ var int lastEntryBar = na
 canTrade = na(lastEntryBar) or (bar_index - lastEntryBar > cooldownBars)
 
 longContext = (bullTrend or structureBias == 1 or chochBull) and not isRange and sessionOk and (not useHTFBias or htfBullBias)
-longLocationOk = inDiscount or (not na(eq) and math.abs(close - eq) / close * 100 < 0.10)
+longLocationOk = inDiscount or nearEquilibrium
 
 shortContext = (bearTrend or structureBias == -1 or chochBear) and not isRange and sessionOk and (not useHTFBias or htfBearBias)
-shortLocationOk = inPremium or (not na(eq) and math.abs(close - eq) / close * 100 < 0.10)
+shortLocationOk = inPremium or nearEquilibrium
 
 //====================================================
 // SNIPER MODE FILTERS
@@ -674,25 +656,19 @@ if not showInfoPanel and (barstate.islast or barstate.islastconfirmedhistory)
 //====================================================
 // VISUEL BOS / CHOCH
 //====================================================
-if showBOSCHOCH and chochBull and not ultraCleanMode
-    if cleanMode
-        label.new(bar_index, high, "CH", style=label.style_label_up, color=color.new(color.lime, 20), textcolor=color.white, size=size.tiny)
-    else
-        label.new(bar_index, high, "CHOCH ↑", style=label.style_label_up, color=color.new(color.lime, 0), textcolor=color.white, size=size.normal)
+chochBullClean = showBOSCHOCH and chochBull and not ultraCleanMode and cleanMode
+chochBullFull = showBOSCHOCH and chochBull and not ultraCleanMode and not cleanMode
+chochBearClean = showBOSCHOCH and chochBear and not ultraCleanMode and cleanMode
+chochBearFull = showBOSCHOCH and chochBear and not ultraCleanMode and not cleanMode
+bosBullFull = showBOSCHOCH and bosBull and not cleanMode
+bosBearFull = showBOSCHOCH and bosBear and not cleanMode
 
-if showBOSCHOCH and chochBear and not ultraCleanMode
-    if cleanMode
-        label.new(bar_index, low, "CH", style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.tiny)
-    else
-        label.new(bar_index, low, "CHOCH ↓", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.normal)
-
-if showBOSCHOCH and bosBull
-    if not cleanMode
-        label.new(bar_index, high, "▲", style=label.style_label_up, color=color.new(color.green, 70), textcolor=color.white, size=size.small)
-
-if showBOSCHOCH and bosBear
-    if not cleanMode
-        label.new(bar_index, low, "▼", style=label.style_label_down, color=color.new(color.red, 70), textcolor=color.white, size=size.small)
+plotshape(chochBullClean, title="CHOCH Bull Clean", style=shape.labelup, location=location.abovebar, color=color.new(color.lime, 20), text="CH", textcolor=color.white, size=size.tiny)
+plotshape(chochBullFull, title="CHOCH Bull Full", style=shape.labelup, location=location.abovebar, color=color.new(color.lime, 0), text="CHOCH", textcolor=color.white, size=size.small)
+plotshape(chochBearClean, title="CHOCH Bear Clean", style=shape.labeldown, location=location.belowbar, color=color.new(color.red, 20), text="CH", textcolor=color.white, size=size.tiny)
+plotshape(chochBearFull, title="CHOCH Bear Full", style=shape.labeldown, location=location.belowbar, color=color.new(color.red, 0), text="CHOCH", textcolor=color.white, size=size.small)
+plotshape(bosBullFull, title="BOS Bull Full", style=shape.labelup, location=location.abovebar, color=color.new(color.green, 70), text="BOS", textcolor=color.white, size=size.tiny)
+plotshape(bosBearFull, title="BOS Bear Full", style=shape.labeldown, location=location.belowbar, color=color.new(color.red, 70), text="BOS", textcolor=color.white, size=size.tiny)
 
 //====================================================
 // ALERTS
