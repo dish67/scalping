@@ -8,7 +8,8 @@ strategy("BTC PRO V7 CLEAN VISUEL - SWING + SNIPER MTF",
      commission_type=strategy.commission.percent,
      commission_value=0.04,
      max_labels_count=200,
-     max_lines_count=100)
+     max_lines_count=100,
+     max_boxes_count=20)
 
 //====================================================
 // INPUTS
@@ -47,6 +48,9 @@ showStructure    = input.bool(true, "Afficher HH/HL/LH/LL")
 showSignals      = input.bool(true, "Afficher LONG / SHORT")
 showBOSCHOCH     = input.bool(true, "Afficher CHOCH / BOS")
 showPDZones      = input.bool(true, "Afficher Premium / Discount")
+showSRZones      = input.bool(true, "Afficher zones Support / Resistance")
+srZoneAtrMult    = input.float(0.35, "Largeur zone S/R ATR", minval=0.05, step=0.05)
+srExtendBars     = input.int(80, "Extension zones S/R", minval=10, maxval=500)
 showHTFBg        = input.bool(true, "Colorer fond HTF")
 showPullback     = input.bool(true, "Afficher Pullback Detector")
 showHTFLabel     = input.bool(false, "Afficher label HTF")
@@ -61,6 +65,7 @@ panelCorner      = input.string("Top Right", "Position panneau", options=["Top R
 emaFast  = ta.ema(close, emaFastLen)
 emaSlow  = ta.ema(close, emaSlowLen)
 emaTrend = ta.ema(close, emaTrendLen)
+atrValue = ta.atr(14)
 
 [diplus, diminus, adx] = ta.dmi(diLen, adxSmooth)
 
@@ -100,6 +105,8 @@ var float prevHighPivot = na
 var float prevLowPivot  = na
 var float lastHighPivot = na
 var float lastLowPivot  = na
+var int lastHighPivotBar = na
+var int lastLowPivotBar = na
 
 highPivotReady = not na(ph)
 lowPivotReady = not na(pl)
@@ -119,11 +126,64 @@ plotshape(showStructureVisual and llSignal, title="LL", style=shape.labelup, loc
 
 if highPivotReady
     lastHighPivot := ph
+    lastHighPivotBar := bar_index - pivotLen
     prevHighPivot := ph
 
 if lowPivotReady
     lastLowPivot := pl
+    lastLowPivotBar := bar_index - pivotLen
     prevLowPivot := pl
+
+//====================================================
+// SUPPORT / RESISTANCE ZONES
+//====================================================
+var box resistanceBox = na
+var box supportBox = na
+
+srZoneHalfWidth = atrValue * srZoneAtrMult
+srRight = bar_index + srExtendBars
+
+if showSRZones and highPivotReady
+    if not na(resistanceBox)
+        box.delete(resistanceBox)
+    resistanceBox := box.new(
+         left=lastHighPivotBar,
+         top=lastHighPivot + srZoneHalfWidth,
+         right=srRight,
+         bottom=lastHighPivot - srZoneHalfWidth,
+         bgcolor=color.new(color.red, cleanTradingMode ? 92 : 88),
+         border_color=color.new(color.red, cleanTradingMode ? 45 : 25),
+         text="Resistance",
+         text_color=color.new(color.red, 0),
+         text_size=size.tiny)
+
+if showSRZones and lowPivotReady
+    if not na(supportBox)
+        box.delete(supportBox)
+    supportBox := box.new(
+         left=lastLowPivotBar,
+         top=lastLowPivot + srZoneHalfWidth,
+         right=srRight,
+         bottom=lastLowPivot - srZoneHalfWidth,
+         bgcolor=color.new(color.lime, cleanTradingMode ? 93 : 89),
+         border_color=color.new(color.lime, cleanTradingMode ? 45 : 25),
+         text="Support",
+         text_color=color.new(color.lime, 0),
+         text_size=size.tiny)
+
+if showSRZones and barstate.islast
+    if not na(resistanceBox)
+        box.set_right(resistanceBox, srRight)
+    if not na(supportBox)
+        box.set_right(supportBox, srRight)
+
+if not showSRZones and barstate.islast
+    if not na(resistanceBox)
+        box.delete(resistanceBox)
+        resistanceBox := na
+    if not na(supportBox)
+        box.delete(supportBox)
+        supportBox := na
 
 //====================================================
 // STRUCTURE STATE / CHOCH / BOS
