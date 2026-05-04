@@ -42,15 +42,18 @@ sniperMode       = input.bool(true, "SNIPER MODE")
 sniperBarsWindow = input.int(12, "Fenêtre max après CHOCH", minval=1)
 sniperSlopeLen   = input.int(5, "Pente EMA lookback", minval=1)
 
+cleanTradingMode = input.bool(true, "Mode clean trading")
 showStructure    = input.bool(true, "Afficher HH/HL/LH/LL")
 showSignals      = input.bool(true, "Afficher LONG / SHORT")
 showBOSCHOCH     = input.bool(true, "Afficher CHOCH / BOS")
 showPDZones      = input.bool(true, "Afficher Premium / Discount")
 showHTFBg        = input.bool(true, "Colorer fond HTF")
 showPullback     = input.bool(true, "Afficher Pullback Detector")
-showHTFLabel     = input.bool(true, "Afficher label HTF")
+showHTFLabel     = input.bool(false, "Afficher label HTF")
 showBOSAsShapes  = input.bool(true, "BOS en symbole")
-showChochLabels  = input.bool(true, "CHOCH en label")
+showChochLabels  = input.bool(false, "CHOCH en label")
+showInfoPanel    = input.bool(true, "Afficher panneau diagnostic")
+panelCorner      = input.string("Top Right", "Position panneau", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"])
 
 //====================================================
 // LOCAL EMA / DMI
@@ -62,35 +65,19 @@ emaTrend = ta.ema(close, emaTrendLen)
 [diplus, diminus, adx] = ta.dmi(diLen, adxSmooth)
 
 //====================================================
-// HTF FUNCTIONS
-//====================================================
-f_htf_adx() =>
-    [_, _, _adx] = ta.dmi(diLen, adxSmooth)
-    _adx
-
-f_htf_diplus() =>
-    [_diplus, _, _] = ta.dmi(diLen, adxSmooth)
-    _diplus
-
-f_htf_diminus() =>
-    [_, _diminus, _] = ta.dmi(diLen, adxSmooth)
-    _diminus
-
-//====================================================
 // HTF DATA
 //====================================================
-htfClose    = request.security(syminfo.tickerid, tfHTF, close)
-htfEmaFast  = request.security(syminfo.tickerid, tfHTF, ta.ema(close, emaFastLen))
-htfEmaSlow  = request.security(syminfo.tickerid, tfHTF, ta.ema(close, emaSlowLen))
-htfEmaTrend = request.security(syminfo.tickerid, tfHTF, ta.ema(close, emaTrendLen))
-htfAdx      = request.security(syminfo.tickerid, tfHTF, f_htf_adx())
-htfDiPlus   = request.security(syminfo.tickerid, tfHTF, f_htf_diplus())
-htfDiMinus  = request.security(syminfo.tickerid, tfHTF, f_htf_diminus())
+f_htf_data() =>
+    [_diPlus, _diMinus, _adx] = ta.dmi(diLen, adxSmooth)
+    [close, ta.ema(close, emaFastLen), ta.ema(close, emaSlowLen), ta.ema(close, emaTrendLen), _adx, _diPlus, _diMinus]
+
+[htfClose, htfEmaFast, htfEmaSlow, htfEmaTrend, htfAdx, htfDiPlus, htfDiMinus] = request.security(syminfo.tickerid, tfHTF, f_htf_data())
 
 htfBull = htfClose > htfEmaTrend and htfEmaFast > htfEmaSlow and htfAdx > adxMin and htfDiPlus > htfDiMinus
 htfBear = htfClose < htfEmaTrend and htfEmaFast < htfEmaSlow and htfAdx > adxMin and htfDiMinus > htfDiPlus
 
-bgcolor(showHTFBg ? (htfBull ? color.new(color.green, 94) : htfBear ? color.new(color.red, 94) : na) : na)
+htfBgTransparency = cleanTradingMode ? 97 : 94
+bgcolor(showHTFBg ? (htfBull ? color.new(color.green, htfBgTransparency) : htfBear ? color.new(color.red, htfBgTransparency) : na) : na)
 
 //====================================================
 // ANTI-EXTENSION
@@ -114,29 +101,28 @@ var float prevLowPivot  = na
 var float lastHighPivot = na
 var float lastLowPivot  = na
 
-hhSignal = not na(ph) and (na(prevHighPivot) ? false : ph > prevHighPivot)
-lhSignal = not na(ph) and (na(prevHighPivot) ? false : ph <= prevHighPivot)
+highPivotReady = not na(ph)
+lowPivotReady = not na(pl)
 
-hlSignal = not na(pl) and (na(prevLowPivot) ? false : pl > prevLowPivot)
-llSignal = not na(pl) and (na(prevLowPivot) ? false : pl <= prevLowPivot)
+hhSignal = highPivotReady and not na(prevHighPivot) and ph > prevHighPivot
+lhSignal = highPivotReady and not na(prevHighPivot) and ph <= prevHighPivot
 
-if not na(ph)
-    prevHighPivot := na(prevHighPivot) ? ph : prevHighPivot
+hlSignal = lowPivotReady and not na(prevLowPivot) and pl > prevLowPivot
+llSignal = lowPivotReady and not na(prevLowPivot) and pl <= prevLowPivot
+
+showStructureVisual = showStructure
+
+plotshape(showStructureVisual and hhSignal, title="HH", style=shape.labeldown, location=location.abovebar, offset=-pivotLen, color=color.new(color.green, 0), text="HH", textcolor=color.white, size=size.tiny)
+plotshape(showStructureVisual and lhSignal, title="LH", style=shape.labeldown, location=location.abovebar, offset=-pivotLen, color=color.new(color.orange, 0), text="LH", textcolor=color.white, size=size.tiny)
+plotshape(showStructureVisual and hlSignal, title="HL", style=shape.labelup, location=location.belowbar, offset=-pivotLen, color=color.new(color.teal, 0), text="HL", textcolor=color.white, size=size.tiny)
+plotshape(showStructureVisual and llSignal, title="LL", style=shape.labelup, location=location.belowbar, offset=-pivotLen, color=color.new(color.red, 0), text="LL", textcolor=color.white, size=size.tiny)
+
+if highPivotReady
     lastHighPivot := ph
-
-if not na(pl)
-    prevLowPivot := na(prevLowPivot) ? pl : prevLowPivot
-    lastLowPivot := pl
-
-plotshape(showStructure and hhSignal, title="HH", style=shape.labeldown, location=location.abovebar, offset=-pivotLen, color=color.new(color.green, 0), text="HH", textcolor=color.white, size=size.small)
-plotshape(showStructure and lhSignal, title="LH", style=shape.labeldown, location=location.abovebar, offset=-pivotLen, color=color.new(color.orange, 0), text="LH", textcolor=color.white, size=size.small)
-plotshape(showStructure and hlSignal, title="HL", style=shape.labelup, location=location.belowbar, offset=-pivotLen, color=color.new(color.teal, 0), text="HL", textcolor=color.white, size=size.small)
-plotshape(showStructure and llSignal, title="LL", style=shape.labelup, location=location.belowbar, offset=-pivotLen, color=color.new(color.red, 0), text="LL", textcolor=color.white, size=size.small)
-
-// Update previous pivots after signal calculation
-if not na(ph)
     prevHighPivot := ph
-if not na(pl)
+
+if lowPivotReady
+    lastLowPivot := pl
     prevLowPivot := pl
 
 //====================================================
@@ -168,14 +154,13 @@ if bosBull
 if bosBear
     structureBias := -1
 
-if showChochLabels and chochBull
-    label.new(bar_index, high, "CHOCH ↑", style=label.style_label_up, color=color.new(color.lime, 0), textcolor=color.white, size=size.normal)
+showChochVisual = showBOSCHOCH and showChochLabels and not cleanTradingMode
+showBOSVisual = showBOSCHOCH and showBOSAsShapes and not cleanTradingMode
 
-if showChochLabels and chochBear
-    label.new(bar_index, low, "CHOCH ↓", style=label.style_label_down, color=color.new(color.red, 0), textcolor=color.white, size=size.normal)
-
-plotshape(showBOSCHOCH and showBOSAsShapes and bosBull, title="BOS Bull", style=shape.triangleup, location=location.abovebar, color=color.new(color.green, 25), size=size.tiny, text="▲", textcolor=color.white)
-plotshape(showBOSCHOCH and showBOSAsShapes and bosBear, title="BOS Bear", style=shape.triangledown, location=location.belowbar, color=color.new(color.red, 25), size=size.tiny, text="▼", textcolor=color.white)
+plotshape(showChochVisual and chochBull, title="CHOCH Bull", style=shape.labelup, location=location.abovebar, color=color.new(color.lime, 0), size=size.tiny, text="CH", textcolor=color.white)
+plotshape(showChochVisual and chochBear, title="CHOCH Bear", style=shape.labeldown, location=location.belowbar, color=color.new(color.red, 0), size=size.tiny, text="CH", textcolor=color.white)
+plotshape(showBOSVisual and bosBull, title="BOS Bull", style=shape.triangleup, location=location.abovebar, color=color.new(color.green, 35), size=size.tiny, text="", textcolor=color.white)
+plotshape(showBOSVisual and bosBear, title="BOS Bear", style=shape.triangledown, location=location.belowbar, color=color.new(color.red, 35), size=size.tiny, text="", textcolor=color.white)
 
 //====================================================
 // PREMIUM / DISCOUNT
@@ -191,10 +176,14 @@ eq = not na(dealingHigh) and not na(dealingLow) ? (dealingHigh + dealingLow) / 2
 
 inDiscount = not na(eq) and close < eq
 inPremium  = not na(eq) and close > eq
+nearEquilibrium = not na(eq) and math.abs(close - eq) / close * 100 < 0.20
 
-plot(showPDZones ? dealingHigh : na, "Premium High", color=color.new(color.red, 78), linewidth=1, style=plot.style_linebr)
-plot(showPDZones ? dealingLow  : na, "Discount Low", color=color.new(color.green, 78), linewidth=1, style=plot.style_linebr)
-plot(showPDZones ? eq          : na, "Equilibrium", color=color.new(color.yellow, 60), linewidth=1, style=plot.style_linebr)
+zoneTransparency = cleanTradingMode ? 88 : 78
+eqTransparency = cleanTradingMode ? 75 : 60
+
+plot(showPDZones ? dealingHigh : na, "Premium High", color=color.new(color.red, zoneTransparency), linewidth=1, style=plot.style_linebr)
+plot(showPDZones ? dealingLow  : na, "Discount Low", color=color.new(color.green, zoneTransparency), linewidth=1, style=plot.style_linebr)
+plot(showPDZones ? eq          : na, "Equilibrium", color=color.new(color.yellow, eqTransparency), linewidth=1, style=plot.style_linebr)
 
 //====================================================
 // REAL PULLBACK DETECTOR
@@ -229,8 +218,8 @@ realPullbackShort =
      recentGreenBars <= maxRetraceBars and
      close < emaSlow
 
-plotshape(showPullback and realPullbackLong, title="PB LONG", style=shape.circle, location=location.belowbar, color=color.lime, size=size.tiny, text="PB", textcolor=color.blue)
-plotshape(showPullback and realPullbackShort, title="PB SHORT", style=shape.circle, location=location.abovebar, color=color.red, size=size.tiny, text="PB", textcolor=color.blue)
+plotshape(showPullback and realPullbackLong, title="PB LONG", style=shape.circle, location=location.belowbar, color=color.lime, size=size.tiny, text="", textcolor=color.blue)
+plotshape(showPullback and realPullbackShort, title="PB SHORT", style=shape.circle, location=location.abovebar, color=color.red, size=size.tiny, text="", textcolor=color.blue)
 
 //====================================================
 // SNIPER MODE
@@ -269,8 +258,8 @@ canTrade = na(lastEntryBar) or (bar_index - lastEntryBar > cooldownBars)
 longContext = htfBull and (structureBias == 1 or chochBull or bullBreak)
 shortContext = htfBear and (structureBias == -1 or chochBear or bearBreak)
 
-longLocationOk = inDiscount or (not na(eq) and math.abs(close - eq) / close * 100 < 0.20)
-shortLocationOk = inPremium or (not na(eq) and math.abs(close - eq) / close * 100 < 0.20)
+longLocationOk = inDiscount or nearEquilibrium
+shortLocationOk = inPremium or nearEquilibrium
 
 longConditionBase =
      longContext and
@@ -314,6 +303,101 @@ shortConditionSniper =
 
 longCondition  = sniperMode ? longConditionSniper  : longConditionBase
 shortCondition = sniperMode ? shortConditionSniper : shortConditionBase
+
+//====================================================
+// DIAGNOSTIC PANEL
+//====================================================
+longPbOk = sniperMode ? firstPullbackLong : realPullbackLong
+shortPbOk = sniperMode ? firstPullbackShort : realPullbackShort
+longSlopeOk = not sniperMode or trendStrongLong
+shortSlopeOk = not sniperMode or trendStrongShort
+longSniperWindowOk = not sniperMode or sniperWindow
+shortSniperWindowOk = not sniperMode or sniperWindow
+
+watchLong = longCondition or htfBull or longContext or realPullbackLong
+watchShort = shortCondition or htfBear or shortContext or realPullbackShort
+preferLong = watchLong and (not watchShort or structureBias >= 0)
+preferShort = watchShort and not preferLong
+
+longBlocker =
+     longCondition ? "OK LONG" :
+     not htfBull ? "HTF" :
+     not longContext ? "Structure" :
+     not longLocationOk ? "Zone" :
+     not longPbOk ? "Pullback" :
+     not longSlopeOk ? "Pente EMA" :
+     not longSniperWindowOk ? "Fenetre CHOCH" :
+     not breakHigh ? "Cassure high" :
+     not notTooExtendedLong ? "Extension" :
+     not flat ? "Deja en trade" :
+     not canTrade ? "Cooldown" :
+     "Attente"
+
+shortBlocker =
+     shortCondition ? "OK SHORT" :
+     not htfBear ? "HTF" :
+     not shortContext ? "Structure" :
+     not shortLocationOk ? "Zone" :
+     not shortPbOk ? "Pullback" :
+     not shortSlopeOk ? "Pente EMA" :
+     not shortSniperWindowOk ? "Fenetre CHOCH" :
+     not breakLow ? "Cassure low" :
+     not notTooExtendedShort ? "Extension" :
+     not flat ? "Deja en trade" :
+     not canTrade ? "Cooldown" :
+     "Attente"
+
+setupText =
+     longCondition ? "Entree LONG" :
+     shortCondition ? "Entree SHORT" :
+     preferLong ? (longPbOk ? "PB Long" : "Surveille Long") :
+     preferShort ? (shortPbOk ? "PB Short" : "Surveille Short") :
+     "Aucun"
+
+blockerText =
+     longCondition or shortCondition ? "OK" :
+     preferLong ? longBlocker :
+     preferShort ? shortBlocker :
+     "Pas de setup"
+
+panelPosition = panelCorner == "Top Left" ? position.top_left : panelCorner == "Bottom Right" ? position.bottom_right : panelCorner == "Bottom Left" ? position.bottom_left : position.top_right
+var table infoTable = table.new(panelPosition, 2, 8, bgcolor=color.new(color.black, 84), border_width=1, border_color=color.gray)
+
+drawInfoPanel = showInfoPanel and (barstate.islast or barstate.islastconfirmedhistory)
+
+if drawInfoPanel
+    htfText = htfBull ? "Bullish" : htfBear ? "Bearish" : "Neutre"
+    htfColor = htfBull ? color.lime : htfBear ? color.red : color.gray
+    structureText = structureBias == 1 ? "Haussiere" : structureBias == -1 ? "Baissiere" : "Neutre"
+    structureColor = structureBias == 1 ? color.lime : structureBias == -1 ? color.red : color.yellow
+    zoneText = inDiscount ? "Discount" : inPremium ? "Premium" : "Equilibre"
+    zoneColor = inDiscount ? color.lime : inPremium ? color.red : color.yellow
+    pbText = realPullbackLong ? "PB Long" : realPullbackShort ? "PB Short" : "Aucun"
+    pbColor = realPullbackLong ? color.lime : realPullbackShort ? color.red : color.gray
+    setupColor = longCondition or setupText == "PB Long" or setupText == "Surveille Long" ? color.lime : shortCondition or setupText == "PB Short" or setupText == "Surveille Short" ? color.red : color.gray
+    blockerColor = blockerText == "OK" ? color.lime : blockerText == "Pas de setup" ? color.gray : color.orange
+    signalText = longCondition ? "LONG" : shortCondition ? "SHORT" : "Aucun"
+    signalColor = longCondition ? color.lime : shortCondition ? color.red : color.gray
+
+    table.cell(infoTable, 0, 0, "Indicateur", text_color=color.white, bgcolor=color.new(color.blue, 65))
+    table.cell(infoTable, 1, 0, "Valeur", text_color=color.white, bgcolor=color.new(color.blue, 65))
+    table.cell(infoTable, 0, 1, "HTF " + tfHTF, text_color=color.white)
+    table.cell(infoTable, 1, 1, htfText, text_color=htfColor)
+    table.cell(infoTable, 0, 2, "Structure", text_color=color.white)
+    table.cell(infoTable, 1, 2, structureText, text_color=structureColor)
+    table.cell(infoTable, 0, 3, "Zone", text_color=color.white)
+    table.cell(infoTable, 1, 3, zoneText, text_color=zoneColor)
+    table.cell(infoTable, 0, 4, "Pullback", text_color=color.white)
+    table.cell(infoTable, 1, 4, pbText, text_color=pbColor)
+    table.cell(infoTable, 0, 5, "Setup", text_color=color.white)
+    table.cell(infoTable, 1, 5, setupText, text_color=setupColor)
+    table.cell(infoTable, 0, 6, "Blocage", text_color=color.white)
+    table.cell(infoTable, 1, 6, blockerText, text_color=blockerColor)
+    table.cell(infoTable, 0, 7, "Signal", text_color=color.white)
+    table.cell(infoTable, 1, 7, signalText, text_color=signalColor)
+
+if not showInfoPanel and (barstate.islast or barstate.islastconfirmedhistory)
+    table.clear(infoTable, 0, 0, 1, 7)
 
 //====================================================
 // RISK MANAGEMENT
@@ -396,12 +480,22 @@ if positionJustClosed
 //====================================================
 // HTF LABEL
 //====================================================
+var label htfLabel = na
+
 if showHTFLabel and barstate.islast
-    var label htfLabel = na
-    label.delete(htfLabel)
     txt = htfBull ? "HTF " + tfHTF + ": BULLISH" : htfBear ? "HTF " + tfHTF + ": BEARISH" : "HTF " + tfHTF + ": NEUTRAL"
     col = htfBull ? color.new(color.green, 0) : htfBear ? color.new(color.red, 0) : color.new(color.gray, 0)
-    htfLabel := label.new(bar_index, high, txt, style=label.style_label_left, color=col, textcolor=color.white)
+    if na(htfLabel)
+        htfLabel := label.new(bar_index, high, txt, style=label.style_label_left, color=col, textcolor=color.white)
+    else
+        label.set_xy(htfLabel, bar_index, high)
+        label.set_text(htfLabel, txt)
+        label.set_color(htfLabel, col)
+        label.set_textcolor(htfLabel, color.white)
+
+if not showHTFLabel and barstate.islast and not na(htfLabel)
+    label.delete(htfLabel)
+    htfLabel := na
 
 //====================================================
 // ALERTS
@@ -418,5 +512,5 @@ plot(emaFast,  "EMA 20",  color=color.orange, linewidth=2)
 plot(emaSlow,  "EMA 50",  color=color.blue, linewidth=2)
 plot(emaTrend, "EMA 200", color=color.purple, linewidth=2)
 
-plotshape(showSignals and longCondition, title="LONG", style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.small, text="LONG", textcolor=color.blue)
-plotshape(showSignals and shortCondition, title="SHORT", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text="SHORT", textcolor=color.blue)
+plotshape(showSignals and longCondition, title="LONG", style=shape.labelup, location=location.belowbar, color=color.lime, size=size.small, text="LONG", textcolor=color.black)
+plotshape(showSignals and shortCondition, title="SHORT", style=shape.labeldown, location=location.abovebar, color=color.red, size=size.small, text="SHORT", textcolor=color.white)
