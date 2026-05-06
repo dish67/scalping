@@ -42,6 +42,11 @@ maxRetraceBars       = input.int(8, "Bars max retracement", minval=1)
 sniperMode       = input.bool(true, "SNIPER MODE")
 sniperBarsWindow = input.int(12, "Fenêtre max après CHOCH", minval=1)
 sniperSlopeLen   = input.int(5, "Pente EMA lookback", minval=1)
+institutionalMode = input.bool(true, "Institutional Setup")
+sweepLookback      = input.int(12, "Lookback sweep liquidite", minval=2)
+retestWindowBars   = input.int(8, "Fenetre retest breakout", minval=1)
+retestAtrTolerance = input.float(0.45, "Tolerance retest ATR", minval=0.05, step=0.05)
+minQualityScore    = input.int(5, "Score qualite minimum", minval=3, maxval=7)
 
 cleanTradingMode = input.bool(true, "Mode clean trading")
 showStructure    = input.bool(true, "Afficher HH/HL/LH/LL")
@@ -57,6 +62,7 @@ showHTFLabel     = input.bool(false, "Afficher label HTF")
 showBOSAsShapes  = input.bool(true, "BOS en symbole")
 showChochLabels  = input.bool(false, "CHOCH en label")
 showInfoPanel    = input.bool(true, "Afficher panneau diagnostic")
+enableSignalAlert = input.bool(true, "Activer alerte signal")
 panelCorner      = input.string("Top Right", "Position panneau", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"])
 
 //====================================================
@@ -313,6 +319,36 @@ var int lastEntryBar = na
 canTrade = na(lastEntryBar) or (bar_index - lastEntryBar > cooldownBars)
 
 //====================================================
+// INSTITUTIONAL SETUPS
+//====================================================
+prevLiquidityLow = ta.lowest(low[1], sweepLookback)
+prevLiquidityHigh = ta.highest(high[1], sweepLookback)
+longSweep = low < prevLiquidityLow and close > prevLiquidityLow and close > open
+shortSweep = high > prevLiquidityHigh and close < prevLiquidityHigh and close < open
+
+var float brokenResistance = na
+var float brokenSupport = na
+var int lastBullBreakoutBar = na
+var int lastBearBreakoutBar = na
+
+if bullBreak
+    brokenResistance := lastHighPivot
+    lastBullBreakoutBar := bar_index
+
+if bearBreak
+    brokenSupport := lastLowPivot
+    lastBearBreakoutBar := bar_index
+
+longRetestActive = not na(brokenResistance) and not na(lastBullBreakoutBar) and bar_index > lastBullBreakoutBar and bar_index - lastBullBreakoutBar <= retestWindowBars
+shortRetestActive = not na(brokenSupport) and not na(lastBearBreakoutBar) and bar_index > lastBearBreakoutBar and bar_index - lastBearBreakoutBar <= retestWindowBars
+
+longRetestOk = longRetestActive and low <= brokenResistance + atrValue * retestAtrTolerance and close > brokenResistance and close > open
+shortRetestOk = shortRetestActive and high >= brokenSupport - atrValue * retestAtrTolerance and close < brokenSupport and close < open
+
+institutionalLongContext = htfBull and structureBias == 1 and emaFast > emaSlow
+institutionalShortContext = htfBear and structureBias == -1 and emaFast < emaSlow
+
+//====================================================
 // CONDITIONS
 //====================================================
 longContext = htfBull and (structureBias == 1 or chochBull or bullBreak)
@@ -361,8 +397,99 @@ shortConditionSniper =
      flat and
      canTrade
 
-longCondition  = sniperMode ? longConditionSniper  : longConditionBase
-shortCondition = sniperMode ? shortConditionSniper : shortConditionBase
+longQualityScore =
+     (htfBull ? 1 : 0) +
+     (structureBias == 1 ? 1 : 0) +
+     (emaFast > emaSlow ? 1 : 0) +
+     (longLocationOk or longRetestOk ? 1 : 0) +
+     (realPullbackLong or longRetestOk or longSweep ? 1 : 0) +
+     (breakHigh or longRetestOk ? 1 : 0) +
+     (notTooExtendedLong ? 1 : 0)
+
+shortQualityScore =
+     (htfBear ? 1 : 0) +
+     (structureBias == -1 ? 1 : 0) +
+     (emaFast < emaSlow ? 1 : 0) +
+     (shortLocationOk or shortRetestOk ? 1 : 0) +
+     (realPullbackShort or shortRetestOk or shortSweep ? 1 : 0) +
+     (breakLow or shortRetestOk ? 1 : 0) +
+     (notTooExtendedShort ? 1 : 0)
+
+longQualityOk = longQualityScore >= minQualityScore
+shortQualityOk = shortQualityScore >= minQualityScore
+
+longRetestCondition =
+     institutionalMode and
+     institutionalLongContext and
+     longRetestOk and
+     trendStrongLong and
+     notTooExtendedLong and
+     longQualityOk and
+     flat and
+     canTrade
+
+shortRetestCondition =
+     institutionalMode and
+     institutionalShortContext and
+     shortRetestOk and
+     trendStrongShort and
+     notTooExtendedShort and
+     shortQualityOk and
+     flat and
+     canTrade
+
+longSweepCondition =
+     institutionalMode and
+     institutionalLongContext and
+     longSweep and
+     breakHigh and
+     notTooExtendedLong and
+     longQualityOk and
+     flat and
+     canTrade
+
+shortSweepCondition =
+     institutionalMode and
+     institutionalShortContext and
+     shortSweep and
+     breakLow and
+     notTooExtendedShort and
+     shortQualityOk and
+     flat and
+     canTrade
+
+classicLongCondition = sniperMode ? longConditionSniper : longConditionBase
+classicShortCondition = sniperMode ? shortConditionSniper : shortConditionBase
+
+institutionalLongCondition = longRetestCondition or longSweepCondition
+institutionalShortCondition = shortRetestCondition or shortSweepCondition
+
+longCondition  = classicLongCondition or institutionalLongCondition
+shortCondition = classicShortCondition or institutionalShortCondition
+
+setupType =
+     longRetestCondition ? "Long Retest" :
+     shortRetestCondition ? "Short Retest" :
+     longSweepCondition ? "Long Sweep" :
+     shortSweepCondition ? "Short Sweep" :
+     classicLongCondition ? "Long Pullback" :
+     classicShortCondition ? "Short Pullback" :
+     longRetestOk ? "Retest Long pret" :
+     shortRetestOk ? "Retest Short pret" :
+     longSweep ? "Sweep Long pret" :
+     shortSweep ? "Sweep Short pret" :
+     "Aucun"
+
+signalEvent = longCondition or shortCondition
+signalAlertType =
+     longRetestCondition ? "LONG RETEST" :
+     longSweepCondition ? "LONG SWEEP" :
+     classicLongCondition ? "LONG PULLBACK" :
+     shortRetestCondition ? "SHORT RETEST" :
+     shortSweepCondition ? "SHORT SWEEP" :
+     classicShortCondition ? "SHORT PULLBACK" :
+     "AUCUN"
+signalAlertMessage = "V7 SIGNAL " + signalAlertType + " | " + syminfo.ticker + " | TF " + timeframe.period + " | Prix " + str.tostring(close, format.mintick) + " | Qualite L " + str.tostring(longQualityScore) + "/7 S " + str.tostring(shortQualityScore) + "/7"
 
 //====================================================
 // DIAGNOSTIC PANEL
@@ -378,17 +505,20 @@ watchLong = longCondition or htfBull or longContext or realPullbackLong
 watchShort = shortCondition or htfBear or shortContext or realPullbackShort
 preferLong = watchLong and (not watchShort or structureBias >= 0)
 preferShort = watchShort and not preferLong
+qualityScore = preferLong ? longQualityScore : preferShort ? shortQualityScore : math.max(longQualityScore, shortQualityScore)
+qualityText = qualityScore >= 7 ? "A+" : qualityScore >= 6 ? "A" : qualityScore >= 5 ? "B" : "Aucun"
 
 longBlocker =
      longCondition ? "OK LONG" :
      not htfBull ? "HTF" :
      not longContext ? "Structure" :
-     not longLocationOk ? "Zone" :
-     not longPbOk ? "Pullback" :
+     not longLocationOk and not longRetestOk ? "Zone" :
+     not longPbOk and not longRetestOk and not longSweep ? "Pullback/Retest/Sweep" :
      not longSlopeOk ? "Pente EMA" :
-     not longSniperWindowOk ? "Fenetre CHOCH" :
-     not breakHigh ? "Cassure high" :
+     not longSniperWindowOk and not longRetestOk and not longSweep ? "Fenetre CHOCH" :
+     not breakHigh and not longRetestOk ? "Cassure high" :
      not notTooExtendedLong ? "Extension" :
+     not longQualityOk ? "Qualite" :
      not flat ? "Deja en trade" :
      not canTrade ? "Cooldown" :
      "Attente"
@@ -397,12 +527,13 @@ shortBlocker =
      shortCondition ? "OK SHORT" :
      not htfBear ? "HTF" :
      not shortContext ? "Structure" :
-     not shortLocationOk ? "Zone" :
-     not shortPbOk ? "Pullback" :
+     not shortLocationOk and not shortRetestOk ? "Zone" :
+     not shortPbOk and not shortRetestOk and not shortSweep ? "Pullback/Retest/Sweep" :
      not shortSlopeOk ? "Pente EMA" :
-     not shortSniperWindowOk ? "Fenetre CHOCH" :
-     not breakLow ? "Cassure low" :
+     not shortSniperWindowOk and not shortRetestOk and not shortSweep ? "Fenetre CHOCH" :
+     not breakLow and not shortRetestOk ? "Cassure low" :
      not notTooExtendedShort ? "Extension" :
+     not shortQualityOk ? "Qualite" :
      not flat ? "Deja en trade" :
      not canTrade ? "Cooldown" :
      "Attente"
@@ -410,6 +541,10 @@ shortBlocker =
 setupText =
      longCondition ? "Entree LONG" :
      shortCondition ? "Entree SHORT" :
+     longRetestOk ? "Retest Long" :
+     shortRetestOk ? "Retest Short" :
+     longSweep ? "Sweep Long" :
+     shortSweep ? "Sweep Short" :
      preferLong ? (longPbOk ? "PB Long" : "Surveille Long") :
      preferShort ? (shortPbOk ? "PB Short" : "Surveille Short") :
      "Aucun"
@@ -421,7 +556,7 @@ blockerText =
      "Pas de setup"
 
 panelPosition = panelCorner == "Top Left" ? position.top_left : panelCorner == "Bottom Right" ? position.bottom_right : panelCorner == "Bottom Left" ? position.bottom_left : position.top_right
-var table infoTable = table.new(panelPosition, 2, 8, bgcolor=color.new(color.black, 84), border_width=1, border_color=color.gray)
+var table infoTable = table.new(panelPosition, 2, 10, bgcolor=color.new(color.black, 84), border_width=1, border_color=color.gray)
 
 drawInfoPanel = showInfoPanel and (barstate.islast or barstate.islastconfirmedhistory)
 
@@ -434,9 +569,11 @@ if drawInfoPanel
     zoneColor = inDiscount ? color.lime : inPremium ? color.red : color.yellow
     pbText = realPullbackLong ? "PB Long" : realPullbackShort ? "PB Short" : "Aucun"
     pbColor = realPullbackLong ? color.lime : realPullbackShort ? color.red : color.gray
-    setupColor = longCondition or setupText == "PB Long" or setupText == "Surveille Long" ? color.lime : shortCondition or setupText == "PB Short" or setupText == "Surveille Short" ? color.red : color.gray
+    setupColor = longCondition or setupText == "PB Long" or setupText == "Surveille Long" or setupText == "Retest Long" or setupText == "Sweep Long" ? color.lime : shortCondition or setupText == "PB Short" or setupText == "Surveille Short" or setupText == "Retest Short" or setupText == "Sweep Short" ? color.red : color.gray
     blockerColor = blockerText == "OK" ? color.lime : blockerText == "Pas de setup" ? color.gray : color.orange
-    signalText = longCondition ? "LONG" : shortCondition ? "SHORT" : "Aucun"
+    typeColor = str.contains(setupType, "Long") ? color.lime : str.contains(setupType, "Short") ? color.red : color.gray
+    qualityColor = qualityText == "A+" ? color.lime : qualityText == "A" ? color.aqua : qualityText == "B" ? color.yellow : color.gray
+    signalText = longRetestCondition ? "LONG Retest" : longSweepCondition ? "LONG Sweep" : classicLongCondition ? "LONG" : shortRetestCondition ? "SHORT Retest" : shortSweepCondition ? "SHORT Sweep" : classicShortCondition ? "SHORT" : "Aucun"
     signalColor = longCondition ? color.lime : shortCondition ? color.red : color.gray
 
     table.cell(infoTable, 0, 0, "Indicateur", text_color=color.white, bgcolor=color.new(color.blue, 65))
@@ -453,11 +590,15 @@ if drawInfoPanel
     table.cell(infoTable, 1, 5, setupText, text_color=setupColor)
     table.cell(infoTable, 0, 6, "Blocage", text_color=color.white)
     table.cell(infoTable, 1, 6, blockerText, text_color=blockerColor)
-    table.cell(infoTable, 0, 7, "Signal", text_color=color.white)
-    table.cell(infoTable, 1, 7, signalText, text_color=signalColor)
+    table.cell(infoTable, 0, 7, "Type", text_color=color.white)
+    table.cell(infoTable, 1, 7, setupType, text_color=typeColor)
+    table.cell(infoTable, 0, 8, "Qualite", text_color=color.white)
+    table.cell(infoTable, 1, 8, qualityText + " (" + str.tostring(qualityScore) + "/7)", text_color=qualityColor)
+    table.cell(infoTable, 0, 9, "Signal", text_color=color.white)
+    table.cell(infoTable, 1, 9, signalText, text_color=signalColor)
 
 if not showInfoPanel and (barstate.islast or barstate.islastconfirmedhistory)
-    table.clear(infoTable, 0, 0, 1, 7)
+    table.clear(infoTable, 0, 0, 1, 9)
 
 //====================================================
 // RISK MANAGEMENT
@@ -560,8 +701,16 @@ if not showHTFLabel and barstate.islast and not na(htfLabel)
 //====================================================
 // ALERTS
 //====================================================
+if enableSignalAlert and signalEvent
+    alert(signalAlertMessage, alert.freq_once_per_bar_close)
+
+alertcondition(signalEvent, title="V7 SIGNAL LONG/SHORT", message="V7 SIGNAL LONG/SHORT sur {{ticker}}")
 alertcondition(longCondition, title="V7 SWING LONG", message="V7 SWING LONG sur {{ticker}}")
 alertcondition(shortCondition, title="V7 SWING SHORT", message="V7 SWING SHORT sur {{ticker}}")
+alertcondition(longRetestCondition, title="V7 LONG RETEST", message="V7 LONG RETEST sur {{ticker}}")
+alertcondition(shortRetestCondition, title="V7 SHORT RETEST", message="V7 SHORT RETEST sur {{ticker}}")
+alertcondition(longSweepCondition, title="V7 LONG SWEEP", message="V7 LONG SWEEP sur {{ticker}}")
+alertcondition(shortSweepCondition, title="V7 SHORT SWEEP", message="V7 SHORT SWEEP sur {{ticker}}")
 alertcondition(chochBull, title="V7 CHOCH BULL", message="V7 CHOCH BULL sur {{ticker}}")
 alertcondition(chochBear, title="V7 CHOCH BEAR", message="V7 CHOCH BEAR sur {{ticker}}")
 
@@ -572,5 +721,10 @@ plot(emaFast,  "EMA 20",  color=color.orange, linewidth=2)
 plot(emaSlow,  "EMA 50",  color=color.blue, linewidth=2)
 plot(emaTrend, "EMA 200", color=color.purple, linewidth=2)
 
-plotshape(showSignals and longCondition, title="LONG", style=shape.labelup, location=location.belowbar, color=color.lime, size=size.small, text="LONG", textcolor=color.black)
-plotshape(showSignals and shortCondition, title="SHORT", style=shape.labeldown, location=location.abovebar, color=color.red, size=size.small, text="SHORT", textcolor=color.white)
+plotshape(showSignals and classicLongCondition, title="LONG Pullback", style=shape.labelup, location=location.belowbar, color=color.lime, size=size.small, text="LONG", textcolor=color.black)
+plotshape(showSignals and longRetestCondition, title="LONG Retest", style=shape.labelup, location=location.belowbar, color=color.new(color.aqua, 0), size=size.small, text="LONG R", textcolor=color.black)
+plotshape(showSignals and longSweepCondition, title="LONG Sweep", style=shape.labelup, location=location.belowbar, color=color.new(color.green, 0), size=size.small, text="LONG S", textcolor=color.white)
+
+plotshape(showSignals and classicShortCondition, title="SHORT Pullback", style=shape.labeldown, location=location.abovebar, color=color.red, size=size.small, text="SHORT", textcolor=color.white)
+plotshape(showSignals and shortRetestCondition, title="SHORT Retest", style=shape.labeldown, location=location.abovebar, color=color.new(color.orange, 0), size=size.small, text="SHORT R", textcolor=color.white)
+plotshape(showSignals and shortSweepCondition, title="SHORT Sweep", style=shape.labeldown, location=location.abovebar, color=color.new(color.maroon, 0), size=size.small, text="SHORT S", textcolor=color.white)
