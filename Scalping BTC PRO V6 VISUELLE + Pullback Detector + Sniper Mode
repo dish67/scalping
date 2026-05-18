@@ -60,8 +60,6 @@ rsiLen            = input.int(14, "RSI longueur", minval=1)
 atrLen            = input.int(14, "ATR longueur", minval=1)
 rsiLongMin        = input.float(52.0, "RSI min long", minval=1, maxval=99, step=0.5)
 rsiShortMax       = input.float(48.0, "RSI max short", minval=1, maxval=99, step=0.5)
-useSessionFilter  = input.bool(true, "Filtre session")
-tradeSession      = input.session("0800-1130", "Session de trade")
 useLiquiditySweep = input.bool(true, "Filtre sweep liquidite")
 liquidityLookback = input.int(10, "Lookback sweep", minval=2)
 minRR             = input.float(1.2, "RR minimum", minval=0.1, step=0.1)
@@ -73,6 +71,13 @@ maxRetraceBars       = input.int(6, "Bars max de retracement", minval=1)
 sniperMode        = input.bool(true, "SNIPER MODE (Ultra sélectif)")
 sniperBarsWindow  = input.int(10, "Fenêtre max après CHOCH", minval=1)
 sniperSlopeLen    = input.int(3, "Pente EMA lookback", minval=1)
+
+institutionalMode      = input.bool(true, "MODE INSTITUTIONNEL")
+institutionalZoneLogic = input.string("FVG ou OB", "Validation zone institutionnelle", options=["FVG ou OB", "FVG seulement", "OB seulement", "FVG + OB"])
+showInstitutionalZones = input.bool(true, "Afficher zones institutionnelles")
+fvgMaxAgeBars          = input.int(80, "Age max FVG", minval=1)
+obMaxAgeBars           = input.int(80, "Age max Order Block", minval=1)
+obDisplacementAtr      = input.float(0.8, "Impulsion OB en ATR", minval=0.1, step=0.1)
 
 //====================================================
 // GUIDE D'ENTREE VISUEL
@@ -88,20 +93,20 @@ sniperSlopeLen    = input.int(3, "Pente EMA lookback", minval=1)
 // - Label vert LONG = entree long validee par la strategie.
 // - Label rouge SHORT = entree short validee par la strategie.
 // - Tableau Setup = direction a surveiller.
-// - Tableau Blocage = raison principale qui empeche l'entree.
+// - Mode institutionnel = validation par FVG / Order Block.
 //
 // Entree Long:
 // 1. CHOCH haussier ou structure haussiere.
 // 2. Pullback vers EMA 9/21.
 // 3. Prix repart au-dessus de l'EMA rapide.
-// 4. Volume, RSI, session, HTF et sweep valident.
+// 4. Volume, RSI, HTF, sweep et zone institutionnelle valident.
 // 5. Le script affiche LONG.
 //
 // Entree Short:
 // 1. CHOCH baissier ou structure baissiere.
 // 2. Pullback vers EMA 9/21.
 // 3. Prix rejette l'EMA rapide vers le bas.
-// 4. Volume, RSI, session, HTF et sweep valident.
+// 4. Volume, RSI, HTF, sweep et zone institutionnelle valident.
 // 5. Le script affiche SHORT.
 
 //====================================================
@@ -127,7 +132,6 @@ bullMomentumOk = rsiValue >= rsiLongMin
 bearMomentumOk = rsiValue <= rsiShortMax
 htfBullBias = hftClose > htfEmaTrend and htfEmaFast > htfEmaSlow
 htfBearBias = hftClose < htfEmaTrend and htfEmaFast < htfEmaSlow
-sessionOk = not useSessionFilter or not na(time(timeframe.period, tradeSession))
 
 //====================================================
 // ANTI-EXTENSION
@@ -278,6 +282,84 @@ plot(showPDZonesVisual ? dealingLow  : na, "Discount Low", color=color.new(color
 plot(showPDZonesVisual ? eq          : na, "Equilibrium", color=color.new(color.yellow, cleanMode ? 75 : 50), linewidth=cleanMode ? 1 : 2, style=plot.style_linebr)
 
 //====================================================
+// INSTITUTIONAL ZONES: FVG / ORDER BLOCK
+//====================================================
+bullFvgDetected = low > high[2]
+bearFvgDetected = high < low[2]
+
+var float bullFvgTop = na
+var float bullFvgBottom = na
+var int bullFvgBar = na
+var float bearFvgTop = na
+var float bearFvgBottom = na
+var int bearFvgBar = na
+
+if bullFvgDetected
+    bullFvgTop := low
+    bullFvgBottom := high[2]
+    bullFvgBar := bar_index
+
+if bearFvgDetected
+    bearFvgTop := low[2]
+    bearFvgBottom := high
+    bearFvgBar := bar_index
+
+bullDisplacement = close > open and math.abs(close - open) >= atrValue * obDisplacementAtr and close > high[1]
+bearDisplacement = close < open and math.abs(close - open) >= atrValue * obDisplacementAtr and close < low[1]
+
+var float bullObTop = na
+var float bullObBottom = na
+var int bullObBar = na
+var float bearObTop = na
+var float bearObBottom = na
+var int bearObBar = na
+
+if bullDisplacement and close[1] < open[1]
+    bullObTop := open[1]
+    bullObBottom := low[1]
+    bullObBar := bar_index - 1
+
+if bearDisplacement and close[1] > open[1]
+    bearObTop := high[1]
+    bearObBottom := open[1]
+    bearObBar := bar_index - 1
+
+bullFvgActive = not na(bullFvgTop) and not na(bullFvgBottom) and bar_index - bullFvgBar <= fvgMaxAgeBars
+bearFvgActive = not na(bearFvgTop) and not na(bearFvgBottom) and bar_index - bearFvgBar <= fvgMaxAgeBars
+bullObActive = not na(bullObTop) and not na(bullObBottom) and bar_index - bullObBar <= obMaxAgeBars
+bearObActive = not na(bearObTop) and not na(bearObBottom) and bar_index - bearObBar <= obMaxAgeBars
+
+longInBullFvg = bullFvgActive and low <= bullFvgTop and high >= bullFvgBottom
+shortInBearFvg = bearFvgActive and low <= bearFvgTop and high >= bearFvgBottom
+longInBullOB = bullObActive and low <= bullObTop and high >= bullObBottom
+shortInBearOB = bearObActive and low <= bearObTop and high >= bearObBottom
+
+longInstitutionalZone =
+     institutionalZoneLogic == "FVG seulement" ? longInBullFvg :
+     institutionalZoneLogic == "OB seulement" ? longInBullOB :
+     institutionalZoneLogic == "FVG + OB" ? longInBullFvg and longInBullOB :
+     longInBullFvg or longInBullOB
+
+shortInstitutionalZone =
+     institutionalZoneLogic == "FVG seulement" ? shortInBearFvg :
+     institutionalZoneLogic == "OB seulement" ? shortInBearOB :
+     institutionalZoneLogic == "FVG + OB" ? shortInBearFvg and shortInBearOB :
+     shortInBearFvg or shortInBearOB
+
+institutionalLongOk = not institutionalMode or longInstitutionalZone
+institutionalShortOk = not institutionalMode or shortInstitutionalZone
+
+showInstZonesVisual = showInstitutionalZones
+plot(showInstZonesVisual and bullFvgActive ? bullFvgTop : na, "Bull FVG Top", color=color.new(color.lime, 55), linewidth=1, style=plot.style_linebr)
+plot(showInstZonesVisual and bullFvgActive ? bullFvgBottom : na, "Bull FVG Bottom", color=color.new(color.lime, 55), linewidth=1, style=plot.style_linebr)
+plot(showInstZonesVisual and bearFvgActive ? bearFvgTop : na, "Bear FVG Top", color=color.new(color.red, 55), linewidth=1, style=plot.style_linebr)
+plot(showInstZonesVisual and bearFvgActive ? bearFvgBottom : na, "Bear FVG Bottom", color=color.new(color.red, 55), linewidth=1, style=plot.style_linebr)
+plot(showInstZonesVisual and bullObActive ? bullObTop : na, "Bull OB Top", color=color.new(color.aqua, 45), linewidth=2, style=plot.style_linebr)
+plot(showInstZonesVisual and bullObActive ? bullObBottom : na, "Bull OB Bottom", color=color.new(color.aqua, 45), linewidth=2, style=plot.style_linebr)
+plot(showInstZonesVisual and bearObActive ? bearObTop : na, "Bear OB Top", color=color.new(color.orange, 45), linewidth=2, style=plot.style_linebr)
+plot(showInstZonesVisual and bearObActive ? bearObBottom : na, "Bear OB Bottom", color=color.new(color.orange, 45), linewidth=2, style=plot.style_linebr)
+
+//====================================================
 // REAL PULLBACK DETECTOR
 //====================================================
 distToFast = math.abs(close - emaFast) / close * 100.0
@@ -360,10 +442,10 @@ shortSweep = high > prevLiquidityHigh and close < prevLiquidityHigh and close < 
 var int lastEntryBar = na
 canTrade = na(lastEntryBar) or (bar_index - lastEntryBar > cooldownBars)
 
-longContext = (bullTrend or structureBias == 1 or chochBull) and not isRange and sessionOk and (not useHTFBias or htfBullBias)
+longContext = (bullTrend or structureBias == 1 or chochBull) and not isRange and (not useHTFBias or htfBullBias)
 longLocationOk = inDiscount or nearEquilibrium
 
-shortContext = (bearTrend or structureBias == -1 or chochBear) and not isRange and sessionOk and (not useHTFBias or htfBearBias)
+shortContext = (bearTrend or structureBias == -1 or chochBear) and not isRange and (not useHTFBias or htfBearBias)
 shortLocationOk = inPremium or nearEquilibrium
 
 //====================================================
@@ -392,6 +474,7 @@ longConditionBase =
      volumeOk and
      bullMomentumOk and
      (not useLiquiditySweep or longSweep) and
+     institutionalLongOk and
      breakHigh and
      notTooExtendedLong and
      longRROk and
@@ -406,6 +489,7 @@ shortConditionBase =
      volumeOk and
      bearMomentumOk and
      (not useLiquiditySweep or shortSweep) and
+     institutionalShortOk and
      breakLow and
      notTooExtendedShort and
      shortRROk and
@@ -421,6 +505,7 @@ longConditionSniper =
      volumeOk and
      bullMomentumOk and
      (not useLiquiditySweep or longSweep) and
+     institutionalLongOk and
      breakHigh and
      notTooExtendedLong and
      longRROk and
@@ -437,6 +522,7 @@ shortConditionSniper =
      volumeOk and
      bearMomentumOk and
      (not useLiquiditySweep or shortSweep) and
+     institutionalShortOk and
      breakLow and
      notTooExtendedShort and
      shortRROk and
@@ -451,56 +537,11 @@ shortCondition = sniperMode ? shortConditionSniper : shortConditionBase
 //====================================================
 longPbOk = sniperMode ? firstPullbackLong : realPullbackLong
 shortPbOk = sniperMode ? firstPullbackShort : realPullbackShort
-longSlopeOk = not sniperMode or trendStrongLong
-shortSlopeOk = not sniperMode or trendStrongShort
-longSweepOk = not useLiquiditySweep or longSweep
-shortSweepOk = not useLiquiditySweep or shortSweep
-longHtfOk = not useHTFBias or htfBullBias
-shortHtfOk = not useHTFBias or htfBearBias
 
 watchLong = longCondition or realPullbackLong or longContext or (structureBias == 1 and inDiscount)
 watchShort = shortCondition or realPullbackShort or shortContext or (structureBias == -1 and inPremium)
 preferLong = watchLong and (not watchShort or structureBias >= 0)
 preferShort = watchShort and not preferLong
-
-longBlocker =
-     longCondition ? "OK LONG" :
-     not flat ? "Deja en trade" :
-     not canTrade ? "Cooldown" :
-     not sessionOk ? "Hors session" :
-     isRange ? "Range" :
-     not volumeOk ? "Volume" :
-     not longHtfOk ? "HTF" :
-     not bullMomentumOk ? "RSI" :
-     not longContext ? "Contexte" :
-     not longLocationOk ? "Zone" :
-     not longPbOk ? "Pullback" :
-     not longSlopeOk ? "Pente EMA" :
-     not longSweepOk ? "Sweep" :
-     not breakHigh ? "Break high" :
-     not notTooExtendedLong ? "Extension" :
-     not longRROk ? "RR" :
-     "Attente"
-
-shortBlocker =
-     shortCondition ? "OK SHORT" :
-     not showShorts ? "Shorts OFF" :
-     not flat ? "Deja en trade" :
-     not canTrade ? "Cooldown" :
-     not sessionOk ? "Hors session" :
-     isRange ? "Range" :
-     not volumeOk ? "Volume" :
-     not shortHtfOk ? "HTF" :
-     not bearMomentumOk ? "RSI" :
-     not shortContext ? "Contexte" :
-     not shortLocationOk ? "Zone" :
-     not shortPbOk ? "Pullback" :
-     not shortSlopeOk ? "Pente EMA" :
-     not shortSweepOk ? "Sweep" :
-     not breakLow ? "Break low" :
-     not notTooExtendedShort ? "Extension" :
-     not shortRROk ? "RR" :
-     "Attente"
 
 setupText =
      longCondition ? "Entree LONG" :
@@ -509,18 +550,8 @@ setupText =
      preferShort ? (shortPbOk ? "PB Short" : "Surveille Short") :
      "Aucun"
 
-blockerText =
-     longCondition or shortCondition ? "OK" :
-     preferLong ? longBlocker :
-     preferShort ? shortBlocker :
-     not sessionOk ? "Hors session" :
-     isRange ? "Range" :
-     not volumeOk ? "Volume" :
-     "Pas de setup"
-
 setupColor = longCondition or setupText == "PB Long" or setupText == "Surveille Long" ? color.lime : shortCondition or setupText == "PB Short" or setupText == "Surveille Short" ? color.red : color.gray
-blockerColor = blockerText == "OK" ? color.lime : blockerText == "Pas de setup" ? color.gray : color.orange
-modeText = sniperMode and ultraCleanMode ? "Sniper + Ultra" : sniperMode ? "Sniper" : ultraCleanMode ? "Ultra clean" : "Base"
+modeText = institutionalMode and sniperMode and ultraCleanMode ? "Inst + Sniper + Ultra" : institutionalMode and sniperMode ? "Inst + Sniper" : institutionalMode ? "Institutionnel" : sniperMode and ultraCleanMode ? "Sniper + Ultra" : sniperMode ? "Sniper" : ultraCleanMode ? "Ultra clean" : "Base"
 signalPanelText =
      longCondition ? "LONG" :
      shortCondition ? "SHORT" :
@@ -627,6 +658,8 @@ if drawInfoPanel
     volumeColor = volumeOk ? color.lime : color.gray
     trendText = bullTrend ? "Bullish" : bearTrend ? "Bearish" : "Mixte"
     trendColor = bullTrend ? color.lime : bearTrend ? color.red : color.yellow
+    ictText = longInBullFvg ? "Bull FVG" : shortInBearFvg ? "Bear FVG" : longInBullOB ? "Bull OB" : shortInBearOB ? "Bear OB" : institutionalMode ? "Attente" : "OFF"
+    ictColor = longInBullFvg or longInBullOB ? color.lime : shortInBearFvg or shortInBearOB ? color.red : institutionalMode ? color.orange : color.gray
     signalText = signalPanelText != "Aucun" ? signalPanelText : lastSignalText
     signalColor = signalPanelText != "Aucun" ? signalPanelColor : lastSignalColor
     rsiColor = rsiValue > 70 ? color.red : rsiValue < 30 ? color.lime : color.yellow
@@ -643,8 +676,8 @@ if drawInfoPanel
     table.cell(infoTable, 1, 4, volumeText, text_color=volumeColor)
     table.cell(infoTable, 0, 5, "Setup", text_color=color.white)
     table.cell(infoTable, 1, 5, setupText, text_color=setupColor)
-    table.cell(infoTable, 0, 6, "Blocage", text_color=color.white)
-    table.cell(infoTable, 1, 6, blockerText, text_color=blockerColor)
+    table.cell(infoTable, 0, 6, "ICT Zone", text_color=color.white)
+    table.cell(infoTable, 1, 6, ictText, text_color=ictColor)
     table.cell(infoTable, 0, 7, showRSIATRInPanel ? "ATR" : "Signal", text_color=color.white)
     table.cell(infoTable, 1, 7, showRSIATRInPanel ? str.tostring(math.round(atrValue, 2)) : signalText, text_color=showRSIATRInPanel ? color.white : signalColor)
     table.cell(infoTable, 0, 8, "Mode", text_color=color.white)
