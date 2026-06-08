@@ -1,0 +1,397 @@
+//@version=5
+indicator("BTC PRO V7.5 CLEAN VISUEL - Simplifie", overlay=true, max_labels_count=300, max_lines_count=100, max_boxes_count=20)
+
+//====================================================
+// INPUTS
+//====================================================
+pivotLen          = input.int(3, "Pivot HH/HL/LH/LL", minval=1)
+rangeLookback     = input.int(40, "Lookback range", minval=10)
+rangeMaxAtrWidth  = input.float(5.0, "Largeur max range en ATR", minval=0.5, step=0.25)
+retestWindowBars  = input.int(10, "Fenetre retest apres cassure", minval=1)
+retestAtrTol      = input.float(0.35, "Tolerance retest ATR", minval=0.05, step=0.05)
+triangleFlatAtr   = input.float(0.75, "Tolerance ligne plate triangle ATR", minval=0.05, step=0.05)
+transitionLookback = input.int(8, "Ligne bleue lookback court terme", minval=3)
+srZoneAtrMult     = input.float(0.35, "Largeur zones support/resistance ATR", minval=0.05, step=0.05)
+srExtendBars      = input.int(80, "Extension support/resistance", minval=10, maxval=500)
+
+showStructure     = input.bool(true, "Afficher HH / HL / LH / LL")
+showRange         = input.bool(true, "Afficher range")
+showSRZones       = input.bool(true, "Afficher support / resistance")
+showTriangles     = input.bool(true, "Afficher triangles simples")
+showTriangleFill  = input.bool(true, "Colorer triangle")
+showTrendLine     = input.bool(true, "Afficher ligne blanche structure")
+showTransitionLine = input.bool(true, "Afficher ligne bleue retournement")
+showSignals       = input.bool(true, "Afficher signaux BUY / SELL")
+showWarnings      = input.bool(true, "Afficher alertes changement possible")
+showPanel         = input.bool(true, "Afficher panneau simple")
+
+//====================================================
+// BASE
+//====================================================
+atrValue = ta.atr(14)
+tol = atrValue * retestAtrTol
+
+//====================================================
+// PIVOTS / STRUCTURE
+//====================================================
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+var float prevHighPivot = na
+var float lastHighPivot = na
+var int prevHighPivotBar = na
+var int lastHighPivotBar = na
+
+var float prevLowPivot = na
+var float lastLowPivot = na
+var int prevLowPivotBar = na
+var int lastLowPivotBar = na
+
+var float prevLhPivot = na
+var float lastLhPivot = na
+var int prevLhPivotBar = na
+var int lastLhPivotBar = na
+
+var float prevHlPivot = na
+var float lastHlPivot = na
+var int prevHlPivotBar = na
+var int lastHlPivotBar = na
+
+highPivotReady = not na(ph)
+lowPivotReady = not na(pl)
+
+hhSignal = highPivotReady and not na(lastHighPivot) and ph > lastHighPivot
+lhSignal = highPivotReady and not na(lastHighPivot) and ph <= lastHighPivot
+hlSignal = lowPivotReady and not na(lastLowPivot) and pl > lastLowPivot
+llSignal = lowPivotReady and not na(lastLowPivot) and pl <= lastLowPivot
+
+if highPivotReady
+    if lhSignal
+        prevLhPivot := lastLhPivot
+        prevLhPivotBar := lastLhPivotBar
+        lastLhPivot := ph
+        lastLhPivotBar := bar_index - pivotLen
+    prevHighPivot := lastHighPivot
+    prevHighPivotBar := lastHighPivotBar
+    lastHighPivot := ph
+    lastHighPivotBar := bar_index - pivotLen
+
+if lowPivotReady
+    if hlSignal
+        prevHlPivot := lastHlPivot
+        prevHlPivotBar := lastHlPivotBar
+        lastHlPivot := pl
+        lastHlPivotBar := bar_index - pivotLen
+    prevLowPivot := lastLowPivot
+    prevLowPivotBar := lastLowPivotBar
+    lastLowPivot := pl
+    lastLowPivotBar := bar_index - pivotLen
+
+plotshape(showStructure and hhSignal, title="HH", style=shape.labeldown, location=location.abovebar, offset=-pivotLen, color=color.new(color.lime, 0), text="HH", textcolor=color.black, size=size.tiny)
+plotshape(showStructure and hlSignal, title="HL", style=shape.labelup, location=location.belowbar, offset=-pivotLen, color=color.new(color.teal, 0), text="HL", textcolor=color.white, size=size.tiny)
+plotshape(showStructure and lhSignal, title="LH", style=shape.labeldown, location=location.abovebar, offset=-pivotLen, color=color.new(color.orange, 0), text="LH", textcolor=color.white, size=size.tiny)
+plotshape(showStructure and llSignal, title="LL", style=shape.labelup, location=location.belowbar, offset=-pivotLen, color=color.new(color.red, 0), text="LL", textcolor=color.white, size=size.tiny)
+
+hasBullStructure = not na(prevHighPivot) and not na(lastHighPivot) and not na(prevLowPivot) and not na(lastLowPivot) and lastHighPivot > prevHighPivot and lastLowPivot > prevLowPivot
+hasBearStructure = not na(prevHighPivot) and not na(lastHighPivot) and not na(prevLowPivot) and not na(lastLowPivot) and lastHighPivot < prevHighPivot and lastLowPivot < prevLowPivot
+
+var int structureBias = 0
+if hasBullStructure
+    structureBias := 1
+if hasBearStructure
+    structureBias := -1
+
+structureText = structureBias == 1 ? "Haussiere" : structureBias == -1 ? "Baissiere" : "Neutre"
+
+//====================================================
+// LIGNE BLANCHE DE STRUCTURE
+//====================================================
+f_project_price(int x1, float y1, int x2, float y2, int x) =>
+    na(x1) or na(x2) or na(y1) or na(y2) or x1 == x2 ? na : y1 + (y2 - y1) * (x - x1) / (x2 - x1)
+
+bullTrendValue = structureBias == 1 ? f_project_price(prevLowPivotBar, prevLowPivot, lastLowPivotBar, lastLowPivot, bar_index) : na
+bearTrendValue = structureBias == -1 ? f_project_price(prevHighPivotBar, prevHighPivot, lastHighPivotBar, lastHighPivot, bar_index) : na
+
+breakBullTrendDown = structureBias == 1 and not na(bullTrendValue) and ta.crossunder(close, bullTrendValue)
+breakBearTrendUp = structureBias == -1 and not na(bearTrendValue) and ta.crossover(close, bearTrendValue)
+
+var line structureLine = na
+if showTrendLine and barstate.islast
+    if not na(structureLine)
+        line.delete(structureLine)
+        structureLine := na
+    if structureBias == 1 and not na(prevLowPivotBar) and not na(lastLowPivotBar)
+        structureLine := line.new(prevLowPivotBar, prevLowPivot, lastLowPivotBar, lastLowPivot, extend=extend.right, color=color.white, width=2)
+    if structureBias == -1 and not na(prevHighPivotBar) and not na(lastHighPivotBar)
+        structureLine := line.new(prevHighPivotBar, prevHighPivot, lastHighPivotBar, lastHighPivot, extend=extend.right, color=color.white, width=2)
+
+if not showTrendLine and barstate.islast and not na(structureLine)
+    line.delete(structureLine)
+    structureLine := na
+
+//====================================================
+// LIGNE BLEUE DE RETOURNEMENT POSSIBLE
+//====================================================
+recentHighOffset = ta.highestbars(high, transitionLookback)
+recentLowOffset = ta.lowestbars(low, transitionLookback)
+recentHighBarsAgo = math.abs(recentHighOffset)
+recentLowBarsAgo = math.abs(recentLowOffset)
+recentHighBar = bar_index - recentHighBarsAgo
+recentLowBar = bar_index - recentLowBarsAgo
+recentHigh = high[recentHighBarsAgo]
+recentLow = low[recentLowBarsAgo]
+
+useRecentBearLine = structureBias == -1 and not na(lastLhPivot) and not na(lastLhPivotBar) and recentHighBar > lastLhPivotBar and recentHigh < lastLhPivot
+useRecentBullLine = structureBias == 1 and not na(lastHlPivot) and not na(lastHlPivotBar) and recentLowBar > lastHlPivotBar and recentLow > lastHlPivot
+
+blueBearX1 = useRecentBearLine ? lastLhPivotBar : prevLhPivotBar
+blueBearY1 = useRecentBearLine ? lastLhPivot : prevLhPivot
+blueBearX2 = useRecentBearLine ? recentHighBar : lastLhPivotBar
+blueBearY2 = useRecentBearLine ? recentHigh : lastLhPivot
+
+blueBullX1 = useRecentBullLine ? lastHlPivotBar : prevHlPivotBar
+blueBullY1 = useRecentBullLine ? lastHlPivot : prevHlPivot
+blueBullX2 = useRecentBullLine ? recentLowBar : lastHlPivotBar
+blueBullY2 = useRecentBullLine ? recentLow : lastHlPivot
+
+blueBearValue = not na(blueBearX1) and not na(blueBearX2) ? f_project_price(blueBearX1, blueBearY1, blueBearX2, blueBearY2, bar_index) : na
+blueBullValue = not na(blueBullX1) and not na(blueBullX2) ? f_project_price(blueBullX1, blueBullY1, blueBullX2, blueBullY2, bar_index) : na
+
+blueBreakUp = structureBias == -1 and not na(blueBearValue) and ta.crossover(close, blueBearValue)
+blueBreakDown = structureBias == 1 and not na(blueBullValue) and ta.crossunder(close, blueBullValue)
+
+var line transitionLine = na
+if showTransitionLine and barstate.islast
+    if not na(transitionLine)
+        line.delete(transitionLine)
+        transitionLine := na
+    if structureBias == -1 and not na(blueBearX1) and not na(blueBearX2)
+        transitionLine := line.new(blueBearX1, blueBearY1, blueBearX2, blueBearY2, extend=extend.right, color=color.blue, width=2)
+    if structureBias == 1 and not na(blueBullX1) and not na(blueBullX2)
+        transitionLine := line.new(blueBullX1, blueBullY1, blueBullX2, blueBullY2, extend=extend.right, color=color.blue, width=2)
+
+if not showTransitionLine and barstate.islast and not na(transitionLine)
+    line.delete(transitionLine)
+    transitionLine := na
+
+//====================================================
+// SUPPORT / RESISTANCE
+//====================================================
+var box resistanceBox = na
+var box supportBox = na
+
+srZoneHalfWidth = atrValue * srZoneAtrMult
+srRight = bar_index + srExtendBars
+
+if showSRZones and highPivotReady
+    if not na(resistanceBox)
+        box.delete(resistanceBox)
+    resistanceBox := box.new(
+         left=lastHighPivotBar,
+         top=lastHighPivot + srZoneHalfWidth,
+         right=srRight,
+         bottom=lastHighPivot - srZoneHalfWidth,
+         bgcolor=color.new(color.red, 88),
+         border_color=color.new(color.red, 25),
+         text="Resistance",
+         text_color=color.red,
+         text_size=size.tiny)
+
+if showSRZones and lowPivotReady
+    if not na(supportBox)
+        box.delete(supportBox)
+    supportBox := box.new(
+         left=lastLowPivotBar,
+         top=lastLowPivot + srZoneHalfWidth,
+         right=srRight,
+         bottom=lastLowPivot - srZoneHalfWidth,
+         bgcolor=color.new(color.lime, 90),
+         border_color=color.new(color.lime, 25),
+         text="Support",
+         text_color=color.lime,
+         text_size=size.tiny)
+
+if showSRZones and barstate.islast
+    if not na(resistanceBox)
+        box.set_right(resistanceBox, srRight)
+    if not na(supportBox)
+        box.set_right(supportBox, srRight)
+
+if not showSRZones and barstate.islast
+    if not na(resistanceBox)
+        box.delete(resistanceBox)
+        resistanceBox := na
+    if not na(supportBox)
+        box.delete(supportBox)
+        supportBox := na
+
+//====================================================
+// RANGE: CASSURE + RETEST
+//====================================================
+rangeHigh = ta.highest(high[1], rangeLookback)
+rangeLow = ta.lowest(low[1], rangeLookback)
+rangeWidth = rangeHigh - rangeLow
+isRange = rangeWidth <= atrValue * rangeMaxAtrWidth
+
+rangeBreakUp = isRange and close > rangeHigh and close[1] <= rangeHigh
+rangeBreakDown = isRange and close < rangeLow and close[1] >= rangeLow
+
+var float brokenRangeHigh = na
+var float brokenRangeLow = na
+var int rangeBreakUpBar = na
+var int rangeBreakDownBar = na
+
+if rangeBreakUp
+    brokenRangeHigh := rangeHigh
+    rangeBreakUpBar := bar_index
+
+if rangeBreakDown
+    brokenRangeLow := rangeLow
+    rangeBreakDownBar := bar_index
+
+rangeRetestUpActive = not na(rangeBreakUpBar) and bar_index > rangeBreakUpBar and bar_index - rangeBreakUpBar <= retestWindowBars
+rangeRetestDownActive = not na(rangeBreakDownBar) and bar_index > rangeBreakDownBar and bar_index - rangeBreakDownBar <= retestWindowBars
+
+rangeBuyRetest = rangeRetestUpActive and low <= brokenRangeHigh + tol and close > brokenRangeHigh and close > open
+rangeSellRetest = rangeRetestDownActive and high >= brokenRangeLow - tol and close < brokenRangeLow and close < open
+
+pRangeHigh = plot(showRange and isRange ? rangeHigh : na, "Range High", color=color.new(color.fuchsia, 0), linewidth=2, style=plot.style_linebr)
+pRangeLow = plot(showRange and isRange ? rangeLow : na, "Range Low", color=color.new(color.fuchsia, 0), linewidth=2, style=plot.style_linebr)
+fill(pRangeHigh, pRangeLow, color=showRange and isRange ? color.new(color.fuchsia, 91) : na, title="Range Zone")
+
+//====================================================
+// TRIANGLES SIMPLES
+//====================================================
+flatHigh = not na(prevHighPivot) and not na(lastHighPivot) and math.abs(lastHighPivot - prevHighPivot) <= atrValue * triangleFlatAtr
+flatLow = not na(prevLowPivot) and not na(lastLowPivot) and math.abs(lastLowPivot - prevLowPivot) <= atrValue * triangleFlatAtr
+risingLows = not na(prevLowPivot) and not na(lastLowPivot) and lastLowPivot > prevLowPivot
+fallingHighs = not na(prevHighPivot) and not na(lastHighPivot) and lastHighPivot < prevHighPivot
+
+ascendingTriangle = flatHigh and risingLows
+descendingTriangle = flatLow and fallingHighs
+
+triangleBreakUp = ascendingTriangle and not na(lastHighPivot) and close > lastHighPivot and close[1] <= lastHighPivot
+triangleBreakDown = descendingTriangle and not na(lastLowPivot) and close < lastLowPivot and close[1] >= lastLowPivot
+
+var int triangleEndBar = na
+var int triangleEndDirection = 0
+
+if triangleBreakUp
+    triangleEndBar := bar_index
+    triangleEndDirection := 1
+
+if triangleBreakDown
+    triangleEndBar := bar_index
+    triangleEndDirection := -1
+
+if triangleEndDirection == 1 and not na(triangleEndBar) and (lastHighPivotBar > triangleEndBar or lastLowPivotBar > triangleEndBar)
+    triangleEndBar := na
+    triangleEndDirection := 0
+
+if triangleEndDirection == -1 and not na(triangleEndBar) and (lastHighPivotBar > triangleEndBar or lastLowPivotBar > triangleEndBar)
+    triangleEndBar := na
+    triangleEndDirection := 0
+
+plotshape(showTriangles and ascendingTriangle and highPivotReady, title="Triangle Ascendant", style=shape.triangleup, location=location.belowbar, color=color.new(color.aqua, 25), size=size.tiny, text="")
+plotshape(showTriangles and descendingTriangle and lowPivotReady, title="Triangle Descendant", style=shape.triangledown, location=location.abovebar, color=color.new(color.orange, 25), size=size.tiny, text="")
+
+var line triangleFlatLine = na
+var line triangleSlopeLine = na
+var linefill triangleFill = na
+
+if showTriangles and barstate.islast
+    if not na(triangleFill)
+        linefill.delete(triangleFill)
+        triangleFill := na
+    if not na(triangleFlatLine)
+        line.delete(triangleFlatLine)
+        triangleFlatLine := na
+    if not na(triangleSlopeLine)
+        line.delete(triangleSlopeLine)
+        triangleSlopeLine := na
+
+    if ascendingTriangle and not na(prevHighPivotBar) and not na(lastHighPivotBar) and not na(prevLowPivotBar) and not na(lastLowPivotBar)
+        ascEndBar = triangleEndDirection == 1 and not na(triangleEndBar) ? triangleEndBar : bar_index
+        ascFlatEnd = f_project_price(prevHighPivotBar, prevHighPivot, lastHighPivotBar, lastHighPivot, ascEndBar)
+        ascSlopeEnd = f_project_price(prevLowPivotBar, prevLowPivot, lastLowPivotBar, lastLowPivot, ascEndBar)
+        triangleFlatLine := line.new(prevHighPivotBar, prevHighPivot, ascEndBar, ascFlatEnd, extend=extend.none, color=color.aqua, width=3)
+        triangleSlopeLine := line.new(prevLowPivotBar, prevLowPivot, ascEndBar, ascSlopeEnd, extend=extend.none, color=color.aqua, width=3)
+        if showTriangleFill
+            triangleFill := linefill.new(triangleFlatLine, triangleSlopeLine, color.new(color.aqua, 88))
+
+    if descendingTriangle and not na(prevLowPivotBar) and not na(lastLowPivotBar) and not na(prevHighPivotBar) and not na(lastHighPivotBar)
+        descEndBar = triangleEndDirection == -1 and not na(triangleEndBar) ? triangleEndBar : bar_index
+        descFlatEnd = f_project_price(prevLowPivotBar, prevLowPivot, lastLowPivotBar, lastLowPivot, descEndBar)
+        descSlopeEnd = f_project_price(prevHighPivotBar, prevHighPivot, lastHighPivotBar, lastHighPivot, descEndBar)
+        triangleFlatLine := line.new(prevLowPivotBar, prevLowPivot, descEndBar, descFlatEnd, extend=extend.none, color=color.orange, width=3)
+        triangleSlopeLine := line.new(prevHighPivotBar, prevHighPivot, descEndBar, descSlopeEnd, extend=extend.none, color=color.orange, width=3)
+        if showTriangleFill
+            triangleFill := linefill.new(triangleFlatLine, triangleSlopeLine, color.new(color.orange, 88))
+
+if not showTriangles and barstate.islast
+    if not na(triangleFill)
+        linefill.delete(triangleFill)
+        triangleFill := na
+    if not na(triangleFlatLine)
+        line.delete(triangleFlatLine)
+        triangleFlatLine := na
+    if not na(triangleSlopeLine)
+        line.delete(triangleSlopeLine)
+        triangleSlopeLine := na
+
+//====================================================
+// SIGNAUX SIMPLIFIES
+//====================================================
+buySignal = rangeBuyRetest or triangleBreakUp or breakBearTrendUp
+sellSignal = rangeSellRetest or triangleBreakDown or breakBullTrendDown
+
+buyReason = rangeBuyRetest ? "BUY Retest Range" : triangleBreakUp ? "BUY Triangle" : breakBearTrendUp ? "BUY Changement" : ""
+sellReason = rangeSellRetest ? "SELL Retest Range" : triangleBreakDown ? "SELL Triangle" : breakBullTrendDown ? "SELL Changement" : ""
+
+plotshape(showSignals and rangeBuyRetest, title="BUY Retest Range", style=shape.labelup, location=location.belowbar, color=color.new(color.lime, 0), text="BUY R", textcolor=color.black, size=size.small)
+plotshape(showSignals and rangeSellRetest, title="SELL Retest Range", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), text="SELL R", textcolor=color.white, size=size.small)
+plotshape(showSignals and triangleBreakUp, title="BUY Triangle", style=shape.labelup, location=location.belowbar, color=color.new(color.aqua, 0), text="BUY T", textcolor=color.black, size=size.small)
+plotshape(showSignals and triangleBreakDown, title="SELL Triangle", style=shape.labeldown, location=location.abovebar, color=color.new(color.orange, 0), text="SELL T", textcolor=color.white, size=size.small)
+
+plotshape(showWarnings and breakBullTrendDown, title="Alerte baisse possible", style=shape.labeldown, location=location.abovebar, color=color.new(color.white, 0), text="Baisse?", textcolor=color.black, size=size.small)
+plotshape(showWarnings and breakBearTrendUp, title="Alerte reprise possible", style=shape.labelup, location=location.belowbar, color=color.new(color.white, 0), text="Reprise?", textcolor=color.black, size=size.small)
+plotshape(showWarnings and blueBreakUp, title="Cassure ligne bleue vers le haut", style=shape.labelup, location=location.belowbar, color=color.new(color.blue, 0), text="Range/Reprise?", textcolor=color.white, size=size.small)
+plotshape(showWarnings and blueBreakDown, title="Cassure ligne bleue vers le bas", style=shape.labeldown, location=location.abovebar, color=color.new(color.blue, 0), text="Range/Baisse?", textcolor=color.white, size=size.small)
+
+//====================================================
+// PANNEAU SIMPLE
+//====================================================
+var table panel = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 84), border_color=color.gray, border_width=1)
+
+if showPanel and barstate.islast
+    table.cell(panel, 0, 0, "V7.5 Simple", text_color=color.white, bgcolor=color.new(color.blue, 65))
+    table.cell(panel, 1, 0, "Etat", text_color=color.white, bgcolor=color.new(color.blue, 65))
+    table.cell(panel, 0, 1, "Structure", text_color=color.white)
+    table.cell(panel, 1, 1, structureText, text_color=structureBias == 1 ? color.lime : structureBias == -1 ? color.red : color.yellow)
+    table.cell(panel, 0, 2, "Range", text_color=color.white)
+    table.cell(panel, 1, 2, isRange ? "Actif" : "Aucun", text_color=isRange ? color.fuchsia : color.gray)
+    table.cell(panel, 0, 3, "Triangle", text_color=color.white)
+    table.cell(panel, 1, 3, ascendingTriangle ? "Ascendant" : descendingTriangle ? "Descendant" : "Aucun", text_color=ascendingTriangle ? color.aqua : descendingTriangle ? color.orange : color.gray)
+    table.cell(panel, 0, 4, "Ligne blanche", text_color=color.white)
+    table.cell(panel, 1, 4, breakBullTrendDown ? "Baisse possible" : breakBearTrendUp ? "Reprise possible" : "OK", text_color=breakBullTrendDown ? color.red : breakBearTrendUp ? color.lime : color.white)
+    table.cell(panel, 0, 5, "Ligne bleue", text_color=color.blue)
+    table.cell(panel, 1, 5, blueBreakUp ? "Range/Reprise?" : blueBreakDown ? "Range/Baisse?" : "OK", text_color=blueBreakUp ? color.lime : blueBreakDown ? color.red : color.blue)
+    table.cell(panel, 0, 6, "Signal", text_color=color.white)
+    table.cell(panel, 1, 6, buySignal ? buyReason : sellSignal ? sellReason : "Aucun", text_color=buySignal ? color.lime : sellSignal ? color.red : color.gray)
+
+if not showPanel and barstate.islast
+    table.clear(panel, 0, 0, 1, 6)
+
+//====================================================
+// ALERTES
+//====================================================
+alertcondition(rangeBuyRetest, title="V7.5 BUY Retest Range", message="V7.5 BUY: cassure de range + retest confirme sur {{ticker}}")
+alertcondition(rangeSellRetest, title="V7.5 SELL Retest Range", message="V7.5 SELL: cassure de range + retest confirme sur {{ticker}}")
+alertcondition(triangleBreakUp, title="V7.5 BUY Triangle", message="V7.5 BUY: cassure triangle ascendant sur {{ticker}}")
+alertcondition(triangleBreakDown, title="V7.5 SELL Triangle", message="V7.5 SELL: cassure triangle descendant sur {{ticker}}")
+alertcondition(breakBullTrendDown, title="V7.5 Baisse Possible", message="V7.5: structure haussiere mais cassure de la ligne blanche sur {{ticker}}")
+alertcondition(breakBearTrendUp, title="V7.5 Reprise Possible", message="V7.5: structure baissiere mais cassure de la ligne blanche vers le haut sur {{ticker}}")
+alertcondition(blueBreakUp, title="V7.5 Ligne Bleue Range/Reprise", message="V7.5: cassure haussiere de la ligne bleue, possibilite de range ou reprise sur {{ticker}}")
+alertcondition(blueBreakDown, title="V7.5 Ligne Bleue Range/Baisse", message="V7.5: cassure baissiere de la ligne bleue, possibilite de range ou baisse sur {{ticker}}")
+alertcondition(buySignal, title="V7.5 Signal BUY", message="V7.5 Signal BUY sur {{ticker}}")
+alertcondition(sellSignal, title="V7.5 Signal SELL", message="V7.5 Signal SELL sur {{ticker}}")

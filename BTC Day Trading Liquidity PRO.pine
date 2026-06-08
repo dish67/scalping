@@ -1,0 +1,389 @@
+//@version=5
+indicator("BTC Day Trading Liquidity PRO", overlay=true, max_labels_count=200, max_lines_count=100, max_boxes_count=40)
+
+//====================================================
+// INPUTS
+//====================================================
+orMinutes          = input.int(30, "Opening Range minutes", minval=5, maxval=180, step=5)
+daySession         = input.session("0930-1600", "Session principale")
+asiaSession        = input.session("2000-0000", "Session Asia")
+londonSession      = input.session("0200-0500", "Session London")
+nySession          = input.session("0930-1200", "Session New York")
+
+showVWAP           = input.bool(true, "Afficher VWAP")
+showOpeningRange   = input.bool(true, "Afficher Opening Range")
+showPrevDayLevels  = input.bool(false, "Afficher Previous Day High/Low")
+showSessionLevels  = input.bool(false, "Afficher High/Low sessions")
+showSweeps         = input.bool(false, "Afficher sweeps liquidite")
+showRetests        = input.bool(false, "Afficher retests")
+showFVG            = input.bool(false, "Afficher FVG")
+showScorePanel     = input.bool(true, "Afficher panneau score")
+showSignals        = input.bool(true, "Afficher signaux")
+cleanMode          = input.bool(true, "Mode clean visuel")
+showSignalBg       = input.bool(true, "Colorer fond sur signal")
+
+sweepLookback      = input.int(20, "Lookback sweep local", minval=3, maxval=200)
+retestWindowBars   = input.int(12, "Fenetre retest apres cassure", minval=1, maxval=100)
+retestAtrTolerance = input.float(0.35, "Tolerance retest ATR", minval=0.05, step=0.05)
+volumeMaLen        = input.int(20, "Moyenne volume", minval=1)
+volumeMultiplier   = input.float(1.15, "Volume fort multiplicateur", minval=0.1, step=0.05)
+atrLen             = input.int(14, "ATR longueur", minval=1)
+minSignalScore     = input.int(4, "Score minimum signal", minval=1, maxval=7)
+fvgMaxAgeBars      = input.int(80, "Age max FVG", minval=1, maxval=500)
+signalCooldownBars = input.int(12, "Cooldown signaux", minval=1, maxval=100)
+signalMode         = input.string("Equilibre", "Mode signal", options=["Rapide", "Equilibre", "Confirme"])
+showPreSignals     = input.bool(true, "Afficher PRE signaux")
+strictConfirmation = input.bool(true, "Confirmation stricte")
+emaConfirmLen      = input.int(50, "EMA confirmation", minval=1)
+vwapSlopeBars      = input.int(3, "Pente VWAP lookback", minval=1, maxval=50)
+useSarFilter       = input.bool(true, "Utiliser filtre SAR")
+showSAR            = input.bool(false, "Afficher SAR")
+sarStart           = input.float(0.02, "SAR start", minval=0.001, step=0.001)
+sarIncrement       = input.float(0.02, "SAR increment", minval=0.001, step=0.001)
+sarMax             = input.float(0.2, "SAR maximum", minval=0.01, step=0.01)
+avoidBadLocation   = input.bool(true, "Eviter achat resistance / short support")
+locationLookback   = input.int(24, "Lookback resistance/support", minval=5, maxval=200)
+minRoomAtr         = input.float(0.8, "Distance mini niveau en ATR", minval=0.1, step=0.1)
+
+panelCorner        = input.string("Top Right", "Position panneau", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"])
+
+//====================================================
+// CORE DATA
+//====================================================
+atrValue = ta.atr(atrLen)
+volumeMa = ta.sma(volume, volumeMaLen)
+volumeStrong = volume > volumeMa * volumeMultiplier
+vwapValue = ta.vwap(hlc3)
+emaConfirm = ta.ema(close, emaConfirmLen)
+vwapRising = vwapValue > vwapValue[vwapSlopeBars]
+vwapFalling = vwapValue < vwapValue[vwapSlopeBars]
+sarValue = ta.sar(sarStart, sarIncrement, sarMax)
+sarBull = sarValue < close
+sarBear = sarValue > close
+sarLongOk = not useSarFilter or sarBull
+sarShortOk = not useSarFilter or sarBear
+recentResistance = ta.highest(high[1], locationLookback)
+recentSupport = ta.lowest(low[1], locationLookback)
+roomToResistance = recentResistance - close
+roomToSupport = close - recentSupport
+longLocationOk = not avoidBadLocation or na(recentResistance) or close > recentResistance or roomToResistance >= atrValue * minRoomAtr
+shortLocationOk = not avoidBadLocation or na(recentSupport) or close < recentSupport or roomToSupport >= atrValue * minRoomAtr
+
+plot(showVWAP ? vwapValue : na, title="VWAP", color=color.new(color.yellow, 0), linewidth=2)
+plot(strictConfirmation ? emaConfirm : na, title="EMA Confirmation", color=color.new(color.white, 55), linewidth=1)
+plot(showSAR ? sarValue : na, title="SAR", style=plot.style_cross, color=sarBull ? color.new(color.lime, 0) : color.new(color.red, 0), linewidth=2)
+
+//====================================================
+// SESSION HELPERS
+//====================================================
+inDaySession = not na(time(timeframe.period, daySession))
+newDaySession = inDaySession and not inDaySession[1]
+
+inAsia = not na(time(timeframe.period, asiaSession))
+inLondon = not na(time(timeframe.period, londonSession))
+inNY = not na(time(timeframe.period, nySession))
+
+newAsia = inAsia and not inAsia[1]
+newLondon = inLondon and not inLondon[1]
+newNY = inNY and not inNY[1]
+
+safeMax(currentValue, newValue) =>
+    na(currentValue) ? newValue : math.max(currentValue, newValue)
+
+safeMin(currentValue, newValue) =>
+    na(currentValue) ? newValue : math.min(currentValue, newValue)
+
+//====================================================
+// OPENING RANGE
+//====================================================
+var float orHigh = na
+var float orLow = na
+var int orStartTime = na
+var bool orActive = false
+var bool orComplete = false
+var int lastBullOrBreakBar = na
+var int lastBearOrBreakBar = na
+
+if newDaySession
+    orHigh := high
+    orLow := low
+    orStartTime := time
+    orActive := true
+    orComplete := false
+    lastBullOrBreakBar := na
+    lastBearOrBreakBar := na
+
+orElapsedMs = not na(orStartTime) ? time - orStartTime : na
+orWindowMs = orMinutes * 60 * 1000
+
+if orActive and not na(orElapsedMs)
+    if orElapsedMs < orWindowMs
+        orHigh := math.max(orHigh, high)
+        orLow := math.min(orLow, low)
+    else
+        orActive := false
+        orComplete := true
+
+orMid = (orHigh + orLow) / 2.0
+
+orHighPlot = showOpeningRange and orComplete ? orHigh : na
+orLowPlot = showOpeningRange and orComplete ? orLow : na
+orMidPlot = showOpeningRange and orComplete and not cleanMode ? orMid : na
+
+plot(orHighPlot, title="Opening Range High", color=color.new(color.lime, 0), linewidth=2, style=plot.style_linebr)
+plot(orLowPlot, title="Opening Range Low", color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
+plot(orMidPlot, title="Opening Range Mid", color=color.new(color.gray, 45), linewidth=1, style=plot.style_linebr)
+
+bullOrBreak = orComplete and not na(orHigh) and close > orHigh and close[1] <= orHigh
+bearOrBreak = orComplete and not na(orLow) and close < orLow and close[1] >= orLow
+
+if bullOrBreak
+    lastBullOrBreakBar := bar_index
+
+if bearOrBreak
+    lastBearOrBreakBar := bar_index
+
+nearLevel(level) =>
+    not na(level) and math.abs(close - level) <= atrValue * retestAtrTolerance
+
+bullRetestTouch = not na(orHigh) and low <= orHigh + atrValue * retestAtrTolerance and high >= orHigh
+bearRetestTouch = not na(orLow) and high >= orLow - atrValue * retestAtrTolerance and low <= orLow
+bullOrRetest = not na(lastBullOrBreakBar) and bar_index > lastBullOrBreakBar and bar_index - lastBullOrBreakBar <= retestWindowBars and bullRetestTouch and close > orHigh
+bearOrRetest = not na(lastBearOrBreakBar) and bar_index > lastBearOrBreakBar and bar_index - lastBearOrBreakBar <= retestWindowBars and bearRetestTouch and close < orLow
+
+//====================================================
+// PREVIOUS DAY HIGH / LOW
+//====================================================
+prevDayHigh = request.security(syminfo.tickerid, "D", high[1], barmerge.gaps_off, barmerge.lookahead_off)
+prevDayLow = request.security(syminfo.tickerid, "D", low[1], barmerge.gaps_off, barmerge.lookahead_off)
+
+plot(showPrevDayLevels ? prevDayHigh : na, title="Previous Day High", color=color.new(color.fuchsia, 5), linewidth=1, style=plot.style_linebr)
+plot(showPrevDayLevels ? prevDayLow : na, title="Previous Day Low", color=color.new(color.aqua, 5), linewidth=1, style=plot.style_linebr)
+
+//====================================================
+// SESSION HIGH / LOW
+//====================================================
+var float asiaHigh = na
+var float asiaLow = na
+var float londonHigh = na
+var float londonLow = na
+var float nyHigh = na
+var float nyLow = na
+
+if newAsia
+    asiaHigh := high
+    asiaLow := low
+else if inAsia
+    asiaHigh := safeMax(asiaHigh, high)
+    asiaLow := safeMin(asiaLow, low)
+
+if newLondon
+    londonHigh := high
+    londonLow := low
+else if inLondon
+    londonHigh := safeMax(londonHigh, high)
+    londonLow := safeMin(londonLow, low)
+
+if newNY
+    nyHigh := high
+    nyLow := low
+else if inNY
+    nyHigh := safeMax(nyHigh, high)
+    nyLow := safeMin(nyLow, low)
+
+plot(showSessionLevels ? asiaHigh : na, title="Asia High", color=color.new(color.blue, 35), linewidth=1, style=plot.style_linebr)
+plot(showSessionLevels ? asiaLow : na, title="Asia Low", color=color.new(color.blue, 35), linewidth=1, style=plot.style_linebr)
+plot(showSessionLevels ? londonHigh : na, title="London High", color=color.new(color.orange, 35), linewidth=1, style=plot.style_linebr)
+plot(showSessionLevels ? londonLow : na, title="London Low", color=color.new(color.orange, 35), linewidth=1, style=plot.style_linebr)
+plot(showSessionLevels and not cleanMode ? nyHigh : na, title="NY High", color=color.new(color.purple, 45), linewidth=1, style=plot.style_linebr)
+plot(showSessionLevels and not cleanMode ? nyLow : na, title="NY Low", color=color.new(color.purple, 45), linewidth=1, style=plot.style_linebr)
+
+//====================================================
+// LIQUIDITY SWEEPS
+//====================================================
+localHigh = ta.highest(high[1], sweepLookback)
+localLow = ta.lowest(low[1], sweepLookback)
+
+sweepPrevHigh = high > prevDayHigh and close < prevDayHigh
+sweepPrevLow = low < prevDayLow and close > prevDayLow
+sweepAsiaHigh = not na(asiaHigh) and high > asiaHigh and close < asiaHigh and not inAsia
+sweepAsiaLow = not na(asiaLow) and low < asiaLow and close > asiaLow and not inAsia
+sweepLondonHigh = not na(londonHigh) and high > londonHigh and close < londonHigh and not inLondon
+sweepLondonLow = not na(londonLow) and low < londonLow and close > londonLow and not inLondon
+sweepLocalHigh = high > localHigh and close < localHigh
+sweepLocalLow = low < localLow and close > localLow
+
+bullSweep = sweepPrevLow or sweepAsiaLow or sweepLondonLow or sweepLocalLow
+bearSweep = sweepPrevHigh or sweepAsiaHigh or sweepLondonHigh or sweepLocalHigh
+
+plotshape(showSweeps and bullSweep, title="Bullish Liquidity Sweep", style=shape.triangleup, location=location.belowbar, color=color.new(color.lime, 0), size=size.tiny, text="SW")
+plotshape(showSweeps and bearSweep, title="Bearish Liquidity Sweep", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny, text="SW")
+
+//====================================================
+// FAIR VALUE GAPS
+//====================================================
+var box bullFvgBox = na
+var box bearFvgBox = na
+var float bullFvgTop = na
+var float bullFvgBottom = na
+var float bearFvgTop = na
+var float bearFvgBottom = na
+var int bullFvgBar = na
+var int bearFvgBar = na
+
+bullFvg = low > high[2]
+bearFvg = high < low[2]
+
+if bullFvg
+    if not na(bullFvgBox)
+        box.delete(bullFvgBox)
+    bullFvgTop := low
+    bullFvgBottom := high[2]
+    bullFvgBar := bar_index
+    if showFVG
+        bullFvgBox := box.new(left=bar_index - 2, top=bullFvgTop, right=bar_index + fvgMaxAgeBars, bottom=bullFvgBottom, bgcolor=color.new(color.lime, cleanMode ? 92 : 86), border_color=color.new(color.lime, 55), text=cleanMode ? "" : "Bull FVG", text_color=color.new(color.lime, 0), text_size=size.tiny)
+
+if bearFvg
+    if not na(bearFvgBox)
+        box.delete(bearFvgBox)
+    bearFvgTop := low[2]
+    bearFvgBottom := high
+    bearFvgBar := bar_index
+    if showFVG
+        bearFvgBox := box.new(left=bar_index - 2, top=bearFvgTop, right=bar_index + fvgMaxAgeBars, bottom=bearFvgBottom, bgcolor=color.new(color.red, cleanMode ? 93 : 87), border_color=color.new(color.red, 55), text=cleanMode ? "" : "Bear FVG", text_color=color.new(color.red, 0), text_size=size.tiny)
+
+if showFVG and barstate.islast
+    if not na(bullFvgBox)
+        box.set_right(bullFvgBox, bar_index + 20)
+    if not na(bearFvgBox)
+        box.set_right(bearFvgBox, bar_index + 20)
+
+if not showFVG and barstate.islast
+    if not na(bullFvgBox)
+        box.delete(bullFvgBox)
+        bullFvgBox := na
+    if not na(bearFvgBox)
+        box.delete(bearFvgBox)
+        bearFvgBox := na
+
+bullFvgFresh = not na(bullFvgBar) and bar_index - bullFvgBar <= fvgMaxAgeBars
+bearFvgFresh = not na(bearFvgBar) and bar_index - bearFvgBar <= fvgMaxAgeBars
+bullFvgRetest = bullFvgFresh and not na(bullFvgTop) and low <= bullFvgTop and close >= bullFvgBottom
+bearFvgRetest = bearFvgFresh and not na(bearFvgBottom) and high >= bearFvgBottom and close <= bearFvgTop
+
+//====================================================
+// SETUP SCORE
+//====================================================
+aboveVWAP = close > vwapValue
+belowVWAP = close < vwapValue
+orBullContext = orComplete and close > orMid
+orBearContext = orComplete and close < orMid
+requiredSignalScore = signalMode == "Rapide" ? math.max(3, minSignalScore - 1) : signalMode == "Confirme" ? math.min(7, minSignalScore + 1) : minSignalScore
+
+bullScore = 0
+bullScore += aboveVWAP ? 1 : 0
+bullScore += bullSweep ? 1 : 0
+bullScore += bullOrBreak or bullOrRetest ? 1 : 0
+bullScore += volumeStrong ? 1 : 0
+bullScore += bullFvgRetest ? 1 : 0
+bullScore += orBullContext ? 1 : 0
+bullScore += sarLongOk ? 1 : 0
+
+bearScore = 0
+bearScore += belowVWAP ? 1 : 0
+bearScore += bearSweep ? 1 : 0
+bearScore += bearOrBreak or bearOrRetest ? 1 : 0
+bearScore += volumeStrong ? 1 : 0
+bearScore += bearFvgRetest ? 1 : 0
+bearScore += orBearContext ? 1 : 0
+bearScore += sarShortOk ? 1 : 0
+
+rawLongSignal = bullScore >= requiredSignalScore and aboveVWAP and (bullSweep or bullOrRetest or bullFvgRetest)
+rawShortSignal = bearScore >= requiredSignalScore and belowVWAP and (bearSweep or bearOrRetest or bearFvgRetest)
+
+longConfirmationOk = not strictConfirmation or (close > emaConfirm and vwapRising and close > open and sarLongOk)
+shortConfirmationOk = not strictConfirmation or (close < emaConfirm and vwapFalling and close < open and sarShortOk)
+
+var int lastSignalBar = na
+var int lastPreSignalBar = na
+
+cooldownOk = na(lastSignalBar) or bar_index - lastSignalBar >= signalCooldownBars
+preCooldownOk = na(lastPreSignalBar) or bar_index - lastPreSignalBar >= math.max(3, math.floor(signalCooldownBars / 2))
+newLongSetup = rawLongSignal and (na(rawLongSignal[1]) or not rawLongSignal[1])
+newShortSetup = rawShortSignal and (na(rawShortSignal[1]) or not rawShortSignal[1])
+preLongContext = showPreSignals and bullScore >= math.max(3, requiredSignalScore - 1) and aboveVWAP and close > emaConfirm and close > open and sarLongOk and longLocationOk
+preShortContext = showPreSignals and bearScore >= math.max(3, requiredSignalScore - 1) and belowVWAP and close < emaConfirm and close < open and sarShortOk and shortLocationOk
+preLongSignal = preLongContext and not rawLongSignal and (na(preLongContext[1]) or not preLongContext[1]) and preCooldownOk
+preShortSignal = preShortContext and not rawShortSignal and (na(preShortContext[1]) or not preShortContext[1]) and preCooldownOk
+
+longSignal = showSignals and newLongSetup and cooldownOk and longConfirmationOk and longLocationOk
+shortSignal = showSignals and newShortSetup and cooldownOk and shortConfirmationOk and shortLocationOk
+
+if longSignal
+    lastSignalBar := bar_index
+
+if shortSignal
+    lastSignalBar := bar_index
+
+if preLongSignal or preShortSignal
+    lastPreSignalBar := bar_index
+
+plotshape(longSignal, title="DAY LONG", style=shape.labelup, location=location.belowbar, color=color.new(color.lime, 0), text="DAY LONG", textcolor=color.black, size=size.small)
+plotshape(shortSignal, title="DAY SHORT", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), text="DAY SHORT", textcolor=color.white, size=size.small)
+plotshape(preLongSignal, title="PRE LONG", style=shape.labelup, location=location.belowbar, color=color.new(color.teal, 0), text="PRE LONG", textcolor=color.white, size=size.tiny)
+plotshape(preShortSignal, title="PRE SHORT", style=shape.labeldown, location=location.abovebar, color=color.new(color.orange, 0), text="PRE SHORT", textcolor=color.black, size=size.tiny)
+plotshape(showRetests and bullOrRetest, title="OR Retest Long", style=shape.circle, location=location.belowbar, color=color.new(color.lime, 0), size=size.tiny)
+plotshape(showRetests and bearOrRetest, title="OR Retest Short", style=shape.circle, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny)
+
+//====================================================
+// PANEL
+//====================================================
+panelPosition = panelCorner == "Top Left" ? position.top_left : panelCorner == "Bottom Right" ? position.bottom_right : panelCorner == "Bottom Left" ? position.bottom_left : position.top_right
+var table scoreTable = table.new(panelPosition, 2, 9, border_width=1)
+
+scoreColor(score, bullish) =>
+    score >= requiredSignalScore ? (bullish ? color.new(color.lime, 0) : color.new(color.red, 0)) : score >= 3 ? color.new(color.orange, 0) : color.new(color.gray, 70)
+
+waitingLongConfirm = rawLongSignal and not longSignal
+waitingShortConfirm = rawShortSignal and not shortSignal
+blockedShortByVWAP = bearScore > bullScore and bearScore >= 3 and aboveVWAP
+blockedLongByVWAP = bullScore > bearScore and bullScore >= 3 and belowVWAP
+blockedLongByResistance = rawLongSignal and not longLocationOk
+blockedShortBySupport = rawShortSignal and not shortLocationOk
+tradeAction = longSignal ? "LONG" : shortSignal ? "SHORT" : preLongContext and not rawLongSignal ? "PRE LONG" : preShortContext and not rawShortSignal ? "PRE SHORT" : blockedLongByResistance ? "LONG resistance" : blockedShortBySupport ? "SHORT support" : waitingLongConfirm ? "Confirmer LONG" : waitingShortConfirm ? "Confirmer SHORT" : blockedShortByVWAP ? "SHORT bloque" : blockedLongByVWAP ? "LONG bloque" : bullScore > bearScore and bullScore >= 3 and aboveVWAP ? "Surveiller LONG" : bearScore > bullScore and bearScore >= 3 and belowVWAP ? "Surveiller SHORT" : "Attendre"
+tradeActionColor = longSignal ? color.new(color.lime, 0) : shortSignal ? color.new(color.red, 0) : str.contains(tradeAction, "bloque") or str.contains(tradeAction, "resistance") or str.contains(tradeAction, "support") ? color.new(color.orange, 25) : str.contains(tradeAction, "LONG") ? color.new(color.green, 45) : str.contains(tradeAction, "SHORT") ? color.new(color.red, 45) : color.new(color.gray, 65)
+
+bgcolor(showSignalBg and longSignal ? color.new(color.lime, 88) : showSignalBg and shortSignal ? color.new(color.red, 88) : na)
+
+if showScorePanel and barstate.islast
+    table.cell(scoreTable, 0, 0, "ACTION", text_color=color.white, bgcolor=color.new(color.black, 0))
+    table.cell(scoreTable, 1, 0, tradeAction, text_color=shortSignal ? color.white : color.black, bgcolor=tradeActionColor)
+    table.cell(scoreTable, 0, 1, "Score Long", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(scoreTable, 1, 1, str.tostring(bullScore) + "/7", text_color=color.black, bgcolor=scoreColor(bullScore, true))
+    table.cell(scoreTable, 0, 2, "Score Short", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(scoreTable, 1, 2, str.tostring(bearScore) + "/7", text_color=color.white, bgcolor=scoreColor(bearScore, false))
+    table.cell(scoreTable, 0, 3, "VWAP", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(scoreTable, 1, 3, aboveVWAP ? "Bull" : belowVWAP ? "Bear" : "Neutre", text_color=color.white, bgcolor=aboveVWAP ? color.new(color.green, 35) : belowVWAP ? color.new(color.red, 35) : color.new(color.gray, 60))
+    table.cell(scoreTable, 0, 4, "OR", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(scoreTable, 1, 4, orComplete ? "Complete" : orActive ? "Active" : "Wait", text_color=color.white, bgcolor=orComplete ? color.new(color.green, 55) : color.new(color.gray, 60))
+    table.cell(scoreTable, 0, 5, "Sweep", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(scoreTable, 1, 5, bullSweep ? "Low" : bearSweep ? "High" : "-", text_color=color.white, bgcolor=bullSweep ? color.new(color.green, 35) : bearSweep ? color.new(color.red, 35) : color.new(color.gray, 70))
+    table.cell(scoreTable, 0, 6, "Volume", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(scoreTable, 1, 6, volumeStrong ? "Fort" : "Normal", text_color=color.white, bgcolor=volumeStrong ? color.new(color.orange, 20) : color.new(color.gray, 70))
+    table.cell(scoreTable, 0, 7, "SAR", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(scoreTable, 1, 7, not useSarFilter ? "Off" : sarBull ? "Bull" : "Bear", text_color=color.white, bgcolor=not useSarFilter ? color.new(color.gray, 70) : sarBull ? color.new(color.green, 35) : color.new(color.red, 35))
+    table.cell(scoreTable, 0, 8, "Signal", text_color=color.white, bgcolor=color.new(color.black, 15))
+    table.cell(scoreTable, 1, 8, longSignal ? "Entree long" : shortSignal ? "Entree short" : preLongContext and not rawLongSignal ? "Pre long" : preShortContext and not rawShortSignal ? "Pre short" : blockedLongByResistance ? "No long resist" : blockedShortBySupport ? "No short support" : rawLongSignal or rawShortSignal ? "Attendre confirm" : blockedShortByVWAP ? "No short VWAP" : blockedLongByVWAP ? "No long VWAP" : "Pas encore", text_color=color.white, bgcolor=longSignal ? color.new(color.green, 20) : shortSignal ? color.new(color.red, 20) : preLongContext or preShortContext or blockedLongByResistance or blockedShortBySupport or rawLongSignal or rawShortSignal or blockedShortByVWAP or blockedLongByVWAP ? color.new(color.orange, 35) : color.new(color.gray, 70))
+
+if not showScorePanel and barstate.islast
+    table.clear(scoreTable, 0, 0, 1, 8)
+
+//====================================================
+// ALERTES
+//====================================================
+alertcondition(longSignal, title="BTC Day Long", message="BTC Day Trading Liquidity PRO: signal DAY LONG")
+alertcondition(shortSignal, title="BTC Day Short", message="BTC Day Trading Liquidity PRO: signal DAY SHORT")
+alertcondition(preLongSignal, title="BTC Pre Long", message="BTC Day Trading Liquidity PRO: pre-signal LONG")
+alertcondition(preShortSignal, title="BTC Pre Short", message="BTC Day Trading Liquidity PRO: pre-signal SHORT")
+alertcondition(bullSweep, title="Bullish Liquidity Sweep", message="BTC Day Trading Liquidity PRO: sweep de liquidite bullish")
+alertcondition(bearSweep, title="Bearish Liquidity Sweep", message="BTC Day Trading Liquidity PRO: sweep de liquidite bearish")
