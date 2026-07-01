@@ -1,0 +1,265 @@
+//@version=5
+strategy("Scalping BTC PRO V6 Simplifier",
+     overlay=true,
+     initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10,
+     pyramiding=0,
+     commission_type=strategy.commission.percent,
+     commission_value=0.04)
+
+//====================================================
+// INPUTS
+//====================================================
+emaFastLen = input.int(9, "EMA Rapide", minval=1)
+emaSlowLen = input.int(21, "EMA Lente", minval=1)
+emaTrendLen = input.int(200, "EMA Tendance", minval=1)
+
+showSignals = input.bool(true, "Afficher croisements")
+showBlockedCrosses = input.bool(false, "Afficher croisements bloques")
+showInfoPanel = input.bool(true, "Afficher tableau")
+showBackground = input.bool(true, "Colorer tendance")
+signalHoldBars = input.int(10, "Garder signal dans tableau", minval=0)
+confirmedSignalsOnly = input.bool(true, "Signaux seulement bougie cloturee")
+useConfirmationWindow = input.bool(true, "Confirmer apres croisement")
+confirmationBars = input.int(3, "Fenetre confirmation", minval=0)
+useContinuationSignals = input.bool(true, "Signaux continuation EMA")
+continuationTolerancePct = input.float(0.05, "Tolerance pullback EMA (%)", minval=0.0, step=0.01)
+continuationCooldownBars = input.int(20, "Cooldown continuation", minval=0)
+minContinuationMovePct = input.float(0.25, "Mouvement mini depuis dernier signal (%)", minval=0.0, step=0.01)
+maxContinuationSignalsPerTrend = input.int(1, "Max continuations par tendance", minval=0)
+useContinuationBreakout = input.bool(true, "Continuation avec cassure recente")
+continuationBreakoutLookback = input.int(8, "Lookback cassure continuation", minval=2)
+useEmaSpreadFilter = input.bool(true, "Filtre anti-range: ecart EMA minimum")
+minEmaSpreadPct = input.float(0.03, "Ecart EMA minimum (%)", minval=0.0, step=0.01)
+useSlopeFilter = input.bool(true, "Filtre pente EMA")
+slopeLookback = input.int(3, "Lookback pente EMA", minval=1)
+minSlopePct = input.float(0.01, "Pente EMA minimum (%)", minval=0.0, step=0.01)
+useTrendFilter = input.bool(true, "Filtre tendance EMA 200")
+cooldownBars = input.int(5, "Cooldown entre signaux", minval=0)
+enableStrategyOrders = input.bool(false, "Activer ordres strategie")
+allowShorts = input.bool(true, "Autoriser shorts")
+panelCorner = input.string("Top Right", "Position tableau", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"])
+
+//====================================================
+// EMA 9 / EMA 21
+//====================================================
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+emaTrend = ta.ema(close, emaTrendLen)
+
+bullCrossRaw = ta.crossover(emaFast, emaSlow)
+bearCrossRaw = ta.crossunder(emaFast, emaSlow)
+
+bullTrend = emaFast > emaSlow
+bearTrend = emaFast < emaSlow
+
+emaDistancePct = ((emaFast - emaSlow) / emaSlow) * 100.0
+emaSpreadPct = math.abs(emaDistancePct)
+emaFastSlopePct = ((emaFast - emaFast[slopeLookback]) / emaFast[slopeLookback]) * 100.0
+
+spreadOk = not useEmaSpreadFilter or emaSpreadPct >= minEmaSpreadPct
+slopeLongOk = not useSlopeFilter or emaFastSlopePct >= minSlopePct
+slopeShortOk = not useSlopeFilter or emaFastSlopePct <= -minSlopePct
+trendLongOk = not useTrendFilter or close > emaTrend
+trendShortOk = not useTrendFilter or close < emaTrend
+confirmedOk = not confirmedSignalsOnly or barstate.isconfirmed
+
+//====================================================
+// SIGNAL FILTERS
+//====================================================
+var int lastSignalBar = na
+var float lastSignalPrice = na
+var int pendingDirection = 0
+var int pendingCrossBar = na
+var int continuationLongCount = 0
+var int continuationShortCount = 0
+
+if bullCrossRaw
+    pendingDirection := 1
+    pendingCrossBar := bar_index
+    continuationLongCount := 0
+    continuationShortCount := 0
+
+if bearCrossRaw
+    pendingDirection := -1
+    pendingCrossBar := bar_index
+    continuationLongCount := 0
+    continuationShortCount := 0
+
+pendingActive = useConfirmationWindow and not na(pendingCrossBar) and bar_index - pendingCrossBar <= confirmationBars
+pendingBull = pendingActive and pendingDirection == 1 and bullTrend
+pendingBear = pendingActive and pendingDirection == -1 and bearTrend
+
+cooldownOk = cooldownBars == 0 or na(lastSignalBar) or bar_index - lastSignalBar >= cooldownBars
+continuationCooldownOk = continuationCooldownBars == 0 or na(lastSignalBar) or bar_index - lastSignalBar >= continuationCooldownBars
+moveFromLastSignalPct = na(lastSignalPrice) ? 999.0 : math.abs((close - lastSignalPrice) / lastSignalPrice) * 100.0
+continuationMoveOk = moveFromLastSignalPct >= minContinuationMovePct
+continuationLongCountOk = continuationLongCount < maxContinuationSignalsPerTrend
+continuationShortCountOk = continuationShortCount < maxContinuationSignalsPerTrend
+
+bullSetup = useConfirmationWindow ? pendingBull : bullCrossRaw
+bearSetup = useConfirmationWindow ? pendingBear : bearCrossRaw
+
+bullCross = bullSetup and confirmedOk and spreadOk and slopeLongOk and trendLongOk and cooldownOk
+bearCross = bearSetup and confirmedOk and spreadOk and slopeShortOk and trendShortOk and cooldownOk
+
+pullbackLong = low <= emaFast * (1 + continuationTolerancePct / 100.0) or low <= emaSlow * (1 + continuationTolerancePct / 100.0)
+pullbackShort = high >= emaFast * (1 - continuationTolerancePct / 100.0) or high >= emaSlow * (1 - continuationTolerancePct / 100.0)
+breakoutLongOk = not useContinuationBreakout or close > ta.highest(high, continuationBreakoutLookback)[1]
+breakoutShortOk = not useContinuationBreakout or close < ta.lowest(low, continuationBreakoutLookback)[1]
+
+bullContinuation = useContinuationSignals and not bullCross and bullTrend and pullbackLong and close > emaFast and close > open and confirmedOk and spreadOk and slopeLongOk and trendLongOk and cooldownOk and continuationCooldownOk and continuationMoveOk and continuationLongCountOk and breakoutLongOk
+bearContinuation = useContinuationSignals and not bearCross and bearTrend and pullbackShort and close < emaFast and close < open and confirmedOk and spreadOk and slopeShortOk and trendShortOk and cooldownOk and continuationCooldownOk and continuationMoveOk and continuationShortCountOk and breakoutShortOk
+
+bullSignal = bullCross or bullContinuation
+bearSignal = bearCross or bearContinuation
+
+if bullSignal or bearSignal
+    lastSignalBar := bar_index
+    lastSignalPrice := close
+    if bullContinuation
+        continuationLongCount += 1
+    if bearContinuation
+        continuationShortCount += 1
+    pendingDirection := 0
+    pendingCrossBar := na
+
+//====================================================
+// LAST CROSS STATE
+//====================================================
+var string lastRawCrossText = "Aucun"
+var color lastRawCrossColor = color.gray
+var int lastRawCrossBar = na
+var string lastCrossText = "Aucun"
+var color lastCrossColor = color.gray
+var int lastCrossBar = na
+
+if bullCrossRaw
+    lastRawCrossText := "Haussier"
+    lastRawCrossColor := color.lime
+    lastRawCrossBar := bar_index
+
+if bearCrossRaw
+    lastRawCrossText := "Baissier"
+    lastRawCrossColor := color.red
+    lastRawCrossBar := bar_index
+
+if bullSignal
+    lastCrossText := "Haussier"
+    lastCrossColor := color.lime
+    lastCrossBar := bar_index
+
+if bearSignal
+    lastCrossText := "Baissier"
+    lastCrossColor := color.red
+    lastCrossBar := bar_index
+
+barsSinceRawCross = na(lastRawCrossBar) ? na : bar_index - lastRawCrossBar
+lastRawCrossDisplay = na(barsSinceRawCross) ? lastRawCrossText : lastRawCrossText + " - " + str.tostring(barsSinceRawCross) + " barres"
+
+trendText = bullTrend ? "Haussiere" : bearTrend ? "Baissiere" : "Neutre"
+trendColor = bullTrend ? color.lime : bearTrend ? color.red : color.gray
+
+signalText = bullSignal ? "BUY" : bearSignal ? "SELL" : "Attente"
+signalColor = bullSignal ? color.lime : bearSignal ? color.red : color.gray
+lastSignalDisplay = na(lastSignalBar) ? "Aucun" : lastCrossText + " - " + str.tostring(bar_index - lastSignalBar) + " barres"
+lastSignalColor = na(lastSignalBar) ? color.gray : lastCrossColor
+signalStillActive = not na(lastSignalBar) and bar_index - lastSignalBar <= signalHoldBars
+panelSignalText = bullSignal or bearSignal ? signalText : signalStillActive ? lastSignalDisplay : "Attente"
+panelSignalColor = bullSignal or bearSignal ? signalColor : signalStillActive ? lastSignalColor : color.gray
+
+rawCrossNow = bullCrossRaw or bearCrossRaw
+setupNow = bullSetup or bearSetup or bullContinuation or bearContinuation
+validSignalNow = bullSignal or bearSignal
+blockedBullCross = showBlockedCrosses and bullCrossRaw and not bullSignal
+blockedBearCross = showBlockedCrosses and bearCrossRaw and not bearSignal
+
+filterText = validSignalNow ? "Signal valide" : setupNow and not spreadOk ? "Range EMA" : setupNow and not cooldownOk ? "Cooldown" : bullSetup and not slopeLongOk ? "Pente faible" : bearSetup and not slopeShortOk ? "Pente faible" : bullSetup and not trendLongOk ? "Sous EMA 200" : bearSetup and not trendShortOk ? "Sur EMA 200" : setupNow and not confirmedOk ? "Bougie ouverte" : useContinuationBreakout and bullTrend and pullbackLong and not breakoutLongOk ? "Pas cassure" : useContinuationBreakout and bearTrend and pullbackShort and not breakoutShortOk ? "Pas cassure" : pendingActive ? "Cross en attente" : "Pret"
+filterColor = validSignalNow ? signalColor : filterText == "Pret" ? color.lime : filterText == "Cross en attente" ? color.aqua : color.orange
+
+//====================================================
+// STRATEGY ORDERS
+//====================================================
+if enableStrategyOrders and bullSignal
+    strategy.entry("LONG", strategy.long)
+
+if enableStrategyOrders and bearSignal
+    if allowShorts
+        strategy.entry("SHORT", strategy.short)
+    else
+        strategy.close("LONG")
+
+//====================================================
+// VISUALS
+//====================================================
+plot(emaFast, "EMA 9", color=color.new(color.lime, 0), linewidth=2)
+plot(emaSlow, "EMA 21", color=color.new(color.orange, 0), linewidth=2)
+plot(useTrendFilter ? emaTrend : na, "EMA 200", color=color.new(color.blue, 0), linewidth=2)
+
+plotshape(showSignals and bullSignal,
+     title="Croisement haussier EMA 9/21",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=color.new(color.lime, 0),
+     text="BUY",
+     textcolor=color.black,
+     size=size.tiny)
+
+plotshape(showSignals and bearSignal,
+     title="Croisement baissier EMA 9/21",
+     style=shape.labeldown,
+     location=location.abovebar,
+     color=color.new(color.red, 0),
+     text="SELL",
+     textcolor=color.white,
+     size=size.tiny)
+
+plotshape(blockedBullCross,
+     title="Croisement haussier bloque",
+     style=shape.circle,
+     location=location.belowbar,
+     color=color.new(color.lime, 65),
+     size=size.tiny)
+
+plotshape(blockedBearCross,
+     title="Croisement baissier bloque",
+     style=shape.circle,
+     location=location.abovebar,
+     color=color.new(color.red, 65),
+     size=size.tiny)
+
+bgcolor(showBackground ? (bullTrend ? color.new(color.green, 94) : bearTrend ? color.new(color.red, 94) : na) : na)
+
+//====================================================
+// TABLEAU SIMPLE
+//====================================================
+panelPosition = panelCorner == "Top Left" ? position.top_left : panelCorner == "Bottom Right" ? position.bottom_right : panelCorner == "Bottom Left" ? position.bottom_left : position.top_right
+var table infoTable = table.new(panelPosition, 2, 8, bgcolor=color.new(color.black, 10), frame_width=1, frame_color=color.gray, border_width=1, border_color=color.new(color.gray, 35))
+
+if showInfoPanel and barstate.islast
+    table.cell(infoTable, 0, 0, "Signal actuel", text_color=color.white, bgcolor=color.new(color.blue, 35), text_size=size.small)
+    table.cell(infoTable, 1, 0, panelSignalText, text_color=color.white, bgcolor=color.new(panelSignalColor, 25), text_size=size.small)
+    table.cell(infoTable, 0, 1, "EMA " + str.tostring(emaFastLen), text_color=color.white, bgcolor=color.new(color.black, 20), text_size=size.small)
+    table.cell(infoTable, 1, 1, str.tostring(emaFast, format.mintick), text_color=color.lime, bgcolor=color.new(color.black, 20), text_size=size.small)
+    table.cell(infoTable, 0, 2, "EMA " + str.tostring(emaSlowLen), text_color=color.white, bgcolor=color.new(color.black, 20), text_size=size.small)
+    table.cell(infoTable, 1, 2, str.tostring(emaSlow, format.mintick), text_color=color.orange, bgcolor=color.new(color.black, 20), text_size=size.small)
+    table.cell(infoTable, 0, 3, "Tendance", text_color=color.white, bgcolor=color.new(color.black, 20), text_size=size.small)
+    table.cell(infoTable, 1, 3, trendText, text_color=trendColor, bgcolor=color.new(color.black, 20), text_size=size.small)
+    table.cell(infoTable, 0, 4, "Dernier cross EMA", text_color=color.white, bgcolor=color.new(color.black, 20), text_size=size.small)
+    table.cell(infoTable, 1, 4, lastRawCrossDisplay, text_color=lastRawCrossColor, bgcolor=color.new(color.black, 20), text_size=size.small)
+    table.cell(infoTable, 0, 5, "Dernier signal", text_color=color.white, bgcolor=color.new(color.black, 20), text_size=size.small)
+    table.cell(infoTable, 1, 5, validSignalNow ? signalText : lastSignalDisplay, text_color=validSignalNow ? signalColor : lastSignalColor, bgcolor=color.new(color.black, 20), text_size=size.small)
+    table.cell(infoTable, 0, 6, "Ecart EMA 9/21", text_color=color.white, bgcolor=color.new(color.black, 20), text_size=size.small)
+    table.cell(infoTable, 1, 6, str.tostring(math.round(emaDistancePct, 2)) + "%", text_color=trendColor, bgcolor=color.new(color.black, 20), text_size=size.small)
+    table.cell(infoTable, 0, 7, "Filtre", text_color=color.white, bgcolor=color.new(color.black, 20), text_size=size.small)
+    table.cell(infoTable, 1, 7, filterText, text_color=filterColor, bgcolor=color.new(color.black, 20), text_size=size.small)
+
+if not showInfoPanel and barstate.islast
+    table.clear(infoTable, 0, 0, 1, 7)
+
+//====================================================
+// ALERTES
+//====================================================
+alertcondition(bullSignal, title="Signal haussier EMA 9/21", message="Signal BUY EMA 9/21 valide")
+alertcondition(bearSignal, title="Signal baissier EMA 9/21", message="Signal SELL EMA 9/21 valide")
