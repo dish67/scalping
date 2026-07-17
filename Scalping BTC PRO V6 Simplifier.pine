@@ -1,6 +1,7 @@
 //@version=5
 strategy("Scalping BTC PRO V6 Simplifier",
      overlay=true,
+     calc_on_every_tick=true,
      initial_capital=10000,
      default_qty_type=strategy.percent_of_equity,
      default_qty_value=10,
@@ -20,8 +21,11 @@ showBlockedCrosses = input.bool(false, "Afficher croisements bloques")
 showInfoPanel = input.bool(true, "Afficher tableau")
 showBackground = input.bool(true, "Colorer tendance")
 signalHoldBars = input.int(10, "Garder signal dans tableau", minval=0)
-confirmedSignalsOnly = input.bool(true, "Signaux seulement bougie cloturee")
-useConfirmationWindow = input.bool(true, "Confirmer apres croisement")
+// Mode immediat par defaut : le signal apparait pendant la bougie du croisement.
+// Activer ces options pour attendre la cloture ou laisser les filtres se valider
+// pendant les bougies suivantes (signal plus tardif, mais plus prudent).
+confirmedSignalsOnly = input.bool(false, "Signaux seulement bougie cloturee")
+useConfirmationWindow = input.bool(false, "Confirmer apres croisement")
 confirmationBars = input.int(3, "Fenetre confirmation", minval=0)
 useContinuationSignals = input.bool(true, "Signaux continuation EMA")
 continuationTolerancePct = input.float(0.05, "Tolerance pullback EMA (%)", minval=0.0, step=0.01)
@@ -36,6 +40,7 @@ useSlopeFilter = input.bool(true, "Filtre pente EMA")
 slopeLookback = input.int(3, "Lookback pente EMA", minval=1)
 minSlopePct = input.float(0.01, "Pente EMA minimum (%)", minval=0.0, step=0.01)
 useTrendFilter = input.bool(true, "Filtre tendance EMA 200")
+allowEarlyReversal = input.bool(true, "Retournement anticipe avant EMA 200")
 cooldownBars = input.int(5, "Cooldown entre signaux", minval=0)
 enableStrategyOrders = input.bool(false, "Activer ordres strategie")
 allowShorts = input.bool(true, "Autoriser shorts")
@@ -101,8 +106,18 @@ continuationShortCountOk = continuationShortCount < maxContinuationSignalsPerTre
 bullSetup = useConfirmationWindow ? pendingBull : bullCrossRaw
 bearSetup = useConfirmationWindow ? pendingBear : bearCrossRaw
 
-bullCross = bullSetup and confirmedOk and spreadOk and slopeLongOk and trendLongOk and cooldownOk
-bearCross = bearSetup and confirmedOk and spreadOk and slopeShortOk and trendShortOk and cooldownOk
+// Au moment exact du croisement, l'ecart entre les deux EMA est proche de zero.
+// Le filtre d'ecart n'est donc applicable qu'au mode de confirmation differee.
+crossSpreadOk = not useConfirmationWindow or spreadOk
+// En mode anticipe, le premier croisement 9/21 peut signaler un retournement
+// avant que le prix ait eu le temps de franchir l'EMA 200.
+earlyBullReversal = allowEarlyReversal and not useConfirmationWindow and bullCrossRaw
+earlyBearReversal = allowEarlyReversal and not useConfirmationWindow and bearCrossRaw
+crossTrendLongOk = trendLongOk or earlyBullReversal
+crossTrendShortOk = trendShortOk or earlyBearReversal
+
+bullCross = bullSetup and confirmedOk and crossSpreadOk and slopeLongOk and crossTrendLongOk and cooldownOk
+bearCross = bearSetup and confirmedOk and crossSpreadOk and slopeShortOk and crossTrendShortOk and cooldownOk
 
 pullbackLong = low <= emaFast * (1 + continuationTolerancePct / 100.0) or low <= emaSlow * (1 + continuationTolerancePct / 100.0)
 pullbackShort = high >= emaFast * (1 - continuationTolerancePct / 100.0) or high >= emaSlow * (1 - continuationTolerancePct / 100.0)
@@ -175,7 +190,7 @@ validSignalNow = bullSignal or bearSignal
 blockedBullCross = showBlockedCrosses and bullCrossRaw and not bullSignal
 blockedBearCross = showBlockedCrosses and bearCrossRaw and not bearSignal
 
-filterText = validSignalNow ? "Signal valide" : setupNow and not spreadOk ? "Range EMA" : setupNow and not cooldownOk ? "Cooldown" : bullSetup and not slopeLongOk ? "Pente faible" : bearSetup and not slopeShortOk ? "Pente faible" : bullSetup and not trendLongOk ? "Sous EMA 200" : bearSetup and not trendShortOk ? "Sur EMA 200" : setupNow and not confirmedOk ? "Bougie ouverte" : useContinuationBreakout and bullTrend and pullbackLong and not breakoutLongOk ? "Pas cassure" : useContinuationBreakout and bearTrend and pullbackShort and not breakoutShortOk ? "Pas cassure" : pendingActive ? "Cross en attente" : "Pret"
+filterText = validSignalNow ? (earlyBullReversal or earlyBearReversal ? "Retournement anticipe" : "Signal valide") : setupNow and not crossSpreadOk ? "Range EMA" : setupNow and not cooldownOk ? "Cooldown" : bullSetup and not slopeLongOk ? "Pente faible" : bearSetup and not slopeShortOk ? "Pente faible" : bullSetup and not crossTrendLongOk ? "Sous EMA 200" : bearSetup and not crossTrendShortOk ? "Sur EMA 200" : setupNow and not confirmedOk ? "Bougie ouverte" : useContinuationBreakout and bullTrend and pullbackLong and not breakoutLongOk ? "Pas cassure" : useContinuationBreakout and bearTrend and pullbackShort and not breakoutShortOk ? "Pas cassure" : pendingActive ? "Cross en attente" : "Pret"
 filterColor = validSignalNow ? signalColor : filterText == "Pret" ? color.lime : filterText == "Cross en attente" ? color.aqua : color.orange
 
 //====================================================
@@ -264,7 +279,13 @@ if not showInfoPanel and barstate.islast
 // Une seule alerte TradingView couvre les BUY et les SELL.
 // Dans TradingView, choisir : "alert() function calls only".
 if bullSignal
-    alert("BUY | " + syminfo.ticker + " | Unite: " + timeframe.period + " | Prix: " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+    if confirmedSignalsOnly
+        alert("BUY | " + syminfo.ticker + " | Unite: " + timeframe.period + " | Prix: " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+    else
+        alert("BUY | " + syminfo.ticker + " | Unite: " + timeframe.period + " | Prix: " + str.tostring(close, format.mintick), alert.freq_once_per_bar)
 
 if bearSignal
-    alert("SELL | " + syminfo.ticker + " | Unite: " + timeframe.period + " | Prix: " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+    if confirmedSignalsOnly
+        alert("SELL | " + syminfo.ticker + " | Unite: " + timeframe.period + " | Prix: " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+    else
+        alert("SELL | " + syminfo.ticker + " | Unite: " + timeframe.period + " | Prix: " + str.tostring(close, format.mintick), alert.freq_once_per_bar)
