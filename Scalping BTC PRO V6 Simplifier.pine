@@ -261,5 +261,10 @@ if not showInfoPanel and barstate.islast
 //====================================================
 // ALERTES
 //====================================================
-alertcondition(bullSignal, title="Signal haussier EMA 9/21", message="Signal BUY EMA 9/21 valide")
-alertcondition(bearSignal, title="Signal baissier EMA 9/21", message="Signal SELL EMA 9/21 valide")
+// Une seule alerte TradingView couvre les BUY et les SELL.
+// Dans TradingView, choisir : "alert() function calls only".
+if bullSignal
+    alert("BUY | " + syminfo.ticker + " | Unite: " + timeframe.period + " | Prix: " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+
+if bearSignal
+    alert("SELL | " + syminfo.ticker + " | Unite: " + timeframe.period + " | Prix: " + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
