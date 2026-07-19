@@ -25,8 +25,8 @@ signalHoldBars = input.int(10, "Garder signal dans tableau", minval=0)
 // Activer ces options pour attendre la cloture ou laisser les filtres se valider
 // pendant les bougies suivantes (signal plus tardif, mais plus prudent).
 confirmedSignalsOnly = input.bool(false, "Signaux seulement bougie cloturee")
-useConfirmationWindow = input.bool(false, "Confirmer apres croisement")
-confirmationBars = input.int(3, "Fenetre confirmation", minval=0)
+useConfirmationWindow = input.bool(true, "Confirmer avec ecart EMA")
+confirmationBars = input.int(5, "Fenetre confirmation", minval=0)
 useContinuationSignals = input.bool(true, "Signaux continuation EMA")
 continuationTolerancePct = input.float(0.05, "Tolerance pullback EMA (%)", minval=0.0, step=0.01)
 continuationCooldownBars = input.int(20, "Cooldown continuation", minval=0)
@@ -109,10 +109,10 @@ bearSetup = useConfirmationWindow ? pendingBear : bearCrossRaw
 // Au moment exact du croisement, l'ecart entre les deux EMA est proche de zero.
 // Le filtre d'ecart n'est donc applicable qu'au mode de confirmation differee.
 crossSpreadOk = not useConfirmationWindow or spreadOk
-// En mode anticipe, le premier croisement 9/21 peut signaler un retournement
-// avant que le prix ait eu le temps de franchir l'EMA 200.
-earlyBullReversal = allowEarlyReversal and not useConfirmationWindow and bullCrossRaw
-earlyBearReversal = allowEarlyReversal and not useConfirmationWindow and bearCrossRaw
+// Le retournement reste autorise avant l'EMA 200, mais le mode de confirmation
+// peut attendre que l'ecart EMA minimum soit atteint.
+earlyBullReversal = allowEarlyReversal and bullSetup and not trendLongOk
+earlyBearReversal = allowEarlyReversal and bearSetup and not trendShortOk
 crossTrendLongOk = trendLongOk or earlyBullReversal
 crossTrendShortOk = trendShortOk or earlyBearReversal
 
