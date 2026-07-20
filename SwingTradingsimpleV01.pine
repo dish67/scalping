@@ -1,297 +1,113 @@
 //@version=5
-strategy("SwingTradingsimpleV01 Pro", overlay=true, max_labels_count=200, max_lines_count=100,
-     initial_capital=10000, pyramiding=0, default_qty_type=strategy.percent_of_equity,
-     default_qty_value=10, commission_type=strategy.commission.percent,
-     commission_value=0.06, slippage=1, process_orders_on_close=true)
+indicator("EMA 9/21 Simple BUY SELL", overlay=true, max_labels_count=500)
 
-//====================================================
-// INPUTS
-//====================================================
-emaFastLen = input.int(20, "EMA rapide", minval=1)
-emaMidLen = input.int(50, "EMA swing", minval=1)
-emaTrendLen = input.int(200, "EMA tendance", minval=1)
+// Parametres simples
+fastLength = input.int(9, "EMA rapide", minval=1)
+slowLength = input.int(21, "EMA lente", minval=2)
+trendLength = input.int(200, "EMA tendance", minval=20)
+signalMode = input.string("Sniper", "Mode signaux", options=["Simple", "Normal", "Sniper"])
+useTrendFilter = input.bool(true, "Filtrer avec EMA tendance")
+useSlopeFilter = input.bool(false, "Confirmer la pente EMA 21")
+slopeLookback = input.int(3, "Pente (bougies)", minval=1)
+cooldownBars = input.int(10, "Pause entre signaux (bougies)", minval=0)
+confirmNextCandle = input.bool(true, "Confirmer sur la bougie suivante")
+usePullbackSignals = input.bool(true, "Signaux de rebond EMA")
+pullbackTolerancePct = input.float(0.15, "Tolerance rebond EMA (%)", minval=0.05, step=0.05)
+minEmaGapPct = input.float(0.02, "Ecart minimum EMA 9/21 (%)", minval=0, step=0.01)
+useRsiFilter = input.bool(true, "Filtrer avec RSI 50")
+rsiLength = input.int(14, "RSI longueur", minval=2)
+showBackground = input.bool(false, "Colorer la tendance")
+showPanel = input.bool(true, "Afficher le tableau")
 
-useHTF = input.bool(true, "Confirmer avec tendance HTF")
-htfTimeframe = input.timeframe("D", "Timeframe HTF")
+// Moyennes mobiles
+emaFast = ta.ema(close, fastLength)
+emaSlow = ta.ema(close, slowLength)
+emaTrend = ta.ema(close, trendLength)
+rsiValue = ta.rsi(close, rsiLength)
+[diPlus, diMinus, adxValue] = ta.dmi(14, 14)
 
-rsiLen = input.int(14, "RSI longueur", minval=1)
-rsiLongMin = input.float(52.0, "RSI minimum long", minval=1, maxval=99, step=0.5)
-rsiShortMax = input.float(48.0, "RSI maximum short", minval=1, maxval=99, step=0.5)
-rsiOverbought = input.float(72.0, "RSI surachat", minval=1, maxval=99, step=0.5)
-rsiOversold = input.float(28.0, "RSI survente", minval=1, maxval=99, step=0.5)
-
-diLen = input.int(14, "DI Length", minval=1)
-adxSmooth = input.int(14, "ADX smoothing", minval=1)
-adxMin = input.float(18.0, "ADX minimum", minval=1, step=0.5)
-
-useVolumeFilter = input.bool(true, "Filtrer par volume")
-volumeLen = input.int(30, "Moyenne volume", minval=1)
-volumeMult = input.float(1.05, "Volume minimum x moyenne", minval=0.1, step=0.05)
-
-pivotLen = input.int(5, "Force pivots HH/HL/LH/LL", minval=2)
-pullbackTolerancePct = input.float(1.0, "Tolerance pullback EMA (%)", minval=0.1, step=0.1)
-cooldownBars = input.int(10, "Cooldown entre signaux", minval=1)
-
-atrLen = input.int(14, "ATR longueur", minval=1)
-atrStopMult = input.float(1.8, "Stop ATR x", minval=0.1, step=0.1)
-rrTarget = input.float(2.0, "Objectif RR", minval=0.5, step=0.1)
-
-showSignals = input.bool(true, "Afficher signaux")
-showStructure = input.bool(true, "Afficher structure HH/HL/LH/LL")
-showRiskLevels = input.bool(true, "Afficher entree / stop / objectif")
-showPanel = input.bool(true, "Afficher panneau")
-showBackground = input.bool(true, "Colorer tendance")
-showShorts = input.bool(true, "Activer shorts")
-
-useStrictShortFilter = input.bool(true, "Filtre short prudent")
-shortSlopeLookback = input.int(3, "Pente EMA short (barres)", minval=1)
-shortBreakoutLookback = input.int(3, "Cassure short (barres)", minval=1)
-shortMaxDistanceAtr = input.float(2.0, "Distance max sous EMA swing (ATR)", minval=0.5, step=0.25)
-
-useEmaCrossSignals = input.bool(true, "Signaux croisement EMA 20/50")
-emaCrossAdxMin = input.float(14.0, "ADX minimum croisement EMA", minval=1, step=0.5)
-emaCrossUseVolume = input.bool(false, "Volume obligatoire sur croisement EMA")
-
-//====================================================
-// INDICATEURS
-//====================================================
-emaFast = ta.ema(close, emaFastLen)
-emaMid = ta.ema(close, emaMidLen)
-emaTrend = ta.ema(close, emaTrendLen)
-
-rsiValue = ta.rsi(close, rsiLen)
-atrValue = ta.atr(atrLen)
-volumeMa = ta.sma(volume, volumeLen)
-volumeOk = not useVolumeFilter or volume >= volumeMa * volumeMult
-
-[diPlus, diMinus, adxValue] = ta.dmi(diLen, adxSmooth)
-
-[htfClose, htfEmaMid, htfEmaTrend] = request.security(
-     syminfo.tickerid,
-     htfTimeframe,
-     [close[1], ta.ema(close, emaMidLen)[1], ta.ema(close, emaTrendLen)[1]],
-     lookahead=barmerge.lookahead_on)
-
-localBullTrend = close > emaTrend and emaFast > emaMid and emaMid > emaTrend
-localBearTrend = close < emaTrend and emaFast < emaMid and emaMid < emaTrend
-htfBullTrend = htfClose > htfEmaTrend and htfEmaMid > htfEmaTrend
-htfBearTrend = htfClose < htfEmaTrend and htfEmaMid < htfEmaTrend
-
-trendLongOk = localBullTrend and (not useHTF or htfBullTrend)
-trendShortOk = localBearTrend and (not useHTF or htfBearTrend)
-momentumLongOk = rsiValue >= rsiLongMin and rsiValue < rsiOverbought and adxValue >= adxMin and diPlus > diMinus
-momentumShortOk = rsiValue <= rsiShortMax and rsiValue > rsiOversold and adxValue >= adxMin and diMinus > diPlus
-
-//====================================================
-// STRUCTURE
-//====================================================
-ph = ta.pivothigh(high, pivotLen, pivotLen)
-pl = ta.pivotlow(low, pivotLen, pivotLen)
-
-var float previousHighPivot = na
-var float previousLowPivot = na
-var float lastHighPivot = na
-var float lastLowPivot = na
-var int structureBias = 0
-
-hhSignal = not na(ph) and not na(lastHighPivot) and ph > lastHighPivot
-lhSignal = not na(ph) and not na(lastHighPivot) and ph <= lastHighPivot
-hlSignal = not na(pl) and not na(lastLowPivot) and pl > lastLowPivot
-llSignal = not na(pl) and not na(lastLowPivot) and pl <= lastLowPivot
-
-if not na(ph)
-    previousHighPivot := lastHighPivot
-    lastHighPivot := ph
-
-if not na(pl)
-    previousLowPivot := lastLowPivot
-    lastLowPivot := pl
-
-hasBullStructure = not na(previousHighPivot) and not na(lastHighPivot) and not na(previousLowPivot) and not na(lastLowPivot) and lastHighPivot > previousHighPivot and lastLowPivot > previousLowPivot
-hasBearStructure = not na(previousHighPivot) and not na(lastHighPivot) and not na(previousLowPivot) and not na(lastLowPivot) and lastHighPivot < previousHighPivot and lastLowPivot < previousLowPivot
-
-if hasBullStructure
-    structureBias := 1
-
-if hasBearStructure
-    structureBias := -1
-
-//====================================================
-// SETUPS SWING
-//====================================================
-toleranceFactor = pullbackTolerancePct / 100.0
-touchesFastEma = low <= emaFast * (1 + toleranceFactor) and high >= emaFast * (1 - toleranceFactor)
-touchesMidEma = low <= emaMid * (1 + toleranceFactor) and high >= emaMid * (1 - toleranceFactor)
-emaPullbackLong = touchesFastEma or touchesMidEma
-emaPullbackShort = touchesFastEma or touchesMidEma
-
-confirmationLong = close > open and close > emaFast
-confirmationShort = close < open and close < emaFast
-
-breakoutLong = not na(lastHighPivot) and close > lastHighPivot and close[1] <= lastHighPivot
-breakoutShort = not na(lastLowPivot) and close < lastLowPivot and close[1] >= lastLowPivot
-
-pullbackLong = trendLongOk and structureBias >= 0 and emaPullbackLong and confirmationLong
-pullbackShort = trendShortOk and structureBias <= 0 and emaPullbackShort and confirmationShort
-
-// Le filtre prudent distingue le rejet d'EMA de la cassure de structure.
-// Une cassure ne doit pas attendre la confirmation tardive du nouveau pivot LL.
-shortEmaSlopeOk = emaFast < emaFast[shortSlopeLookback] and emaMid < emaMid[shortSlopeLookback]
-shortFreshBreakdown = close < ta.lowest(low[1], shortBreakoutLookback)
-shortNotExtended = emaMid - close <= atrValue * shortMaxDistanceAtr
-strictPullbackShortOk = structureBias == -1 and shortEmaSlopeOk and shortFreshBreakdown and shortNotExtended
-strictBreakoutShortOk = breakoutShort and shortEmaSlopeOk and shortNotExtended
-
-normalShortSetup = pullbackShort or (breakoutShort and trendShortOk)
-strictShortSetup = (pullbackShort and strictPullbackShortOk) or (trendShortOk and strictBreakoutShortOk)
-shortSetupOk = useStrictShortFilter ? strictShortSetup : normalShortSetup
-
-longSetupOk = pullbackLong or (breakoutLong and trendLongOk)
-
-// Entrees de changement de tendance: croisement 20/50 confirme par l'EMA 200 et le HTF.
-emaCrossLongSetup = useEmaCrossSignals and ta.crossover(emaFast, emaMid) and close > emaTrend and (not useHTF or htfBullTrend)
-emaCrossShortSetup = useEmaCrossSignals and showShorts and ta.crossunder(emaFast, emaMid) and close < emaTrend and (not useHTF or htfBearTrend)
-emaCrossLongMomentumOk = rsiValue > 50 and adxValue >= emaCrossAdxMin and diPlus > diMinus
-emaCrossShortMomentumOk = rsiValue < 50 and adxValue >= emaCrossAdxMin and diMinus > diPlus
-emaCrossVolumeOk = not emaCrossUseVolume or volumeOk
-
-rawLongSignal = (longSetupOk and momentumLongOk and volumeOk) or (emaCrossLongSetup and emaCrossLongMomentumOk and emaCrossVolumeOk)
-rawShortSignal = showShorts and ((shortSetupOk and momentumShortOk and volumeOk) or (emaCrossShortSetup and emaCrossShortMomentumOk and emaCrossVolumeOk))
-
+// Signal uniquement a la cloture de la bougie : aucun repaint intrabar.
+rawBuyCross = barstate.isconfirmed and ta.crossover(emaFast, emaSlow)
+rawSellCross = barstate.isconfirmed and ta.crossunder(emaFast, emaSlow)
+trendBuyOk = not useTrendFilter or close > emaTrend
+trendSellOk = not useTrendFilter or close < emaTrend
+slopeBuyOk = not useSlopeFilter or emaSlow > emaSlow[slopeLookback]
+slopeSellOk = not useSlopeFilter or emaSlow < emaSlow[slopeLookback]
 var int lastSignalBar = na
-var float activeEntry = na
-var float activeStop = na
-var float activeTarget = na
-var int activeDirection = 0
-var int activeEntryBar = na
+cooldownOk = na(lastSignalBar) or bar_index - lastSignalBar > cooldownBars
+buyTrigger = confirmNextCandle ? rawBuyCross[1] and close > open and close > emaFast : rawBuyCross
+sellTrigger = confirmNextCandle ? rawSellCross[1] and close < open and close < emaFast : rawSellCross
 
-canSignal = activeDirection == 0 and (na(lastSignalBar) or bar_index - lastSignalBar > cooldownBars)
+pullbackTolerance = pullbackTolerancePct / 100
+emaGapPct = close != 0 ? math.abs(emaFast - emaSlow) / close * 100 : 0
+emaGapOk = emaGapPct >= minEmaGapPct
+upTrend = close > emaTrend and emaFast > emaSlow
+downTrend = close < emaTrend and emaFast < emaSlow
+buyPullback = usePullbackSignals and upTrend and low <= emaSlow * (1 + pullbackTolerance) and close > emaFast and close > open and close > high[1]
+sellPullback = usePullbackSignals and downTrend and high >= emaSlow * (1 - pullbackTolerance) and close < emaFast and close < open and close < low[1]
+buyRsiOk = not useRsiFilter or rsiValue > 50
+sellRsiOk = not useRsiFilter or rsiValue < 50
 
-longSignal = barstate.isconfirmed and rawLongSignal and canSignal
-shortSignal = barstate.isconfirmed and rawShortSignal and canSignal
-emaCrossLongSignal = longSignal and emaCrossLongSetup
-emaCrossShortSignal = shortSignal and emaCrossShortSetup
+normalBuySignal = (buyTrigger or buyPullback) and trendBuyOk and slopeBuyOk and buyRsiOk and emaGapOk and cooldownOk
+normalSellSignal = (sellTrigger or sellPullback) and trendSellOk and slopeSellOk and sellRsiOk and emaGapOk and cooldownOk
 
-if longSignal or shortSignal
+// Mode sniper : une configuration rare, alignee et confirmee par momentum.
+sniperGapOk = emaGapPct >= math.max(minEmaGapPct, 0.05)
+sniperBuyOk = trendBuyOk and close > emaTrend and emaSlow > emaSlow[slopeLookback] and rsiValue >= 55 and diPlus > diMinus and adxValue >= 20 and close > high[1] and sniperGapOk
+sniperSellOk = trendSellOk and close < emaTrend and emaSlow < emaSlow[slopeLookback] and rsiValue <= 45 and diMinus > diPlus and adxValue >= 20 and close < low[1] and sniperGapOk
+
+simpleBuySignal = (rawBuyCross or buyPullback) and cooldownOk
+simpleSellSignal = (rawSellCross or sellPullback) and cooldownOk
+buySignal = signalMode == "Simple" ? simpleBuySignal : signalMode == "Sniper" ? (buyTrigger or buyPullback) and sniperBuyOk and cooldownOk : normalBuySignal
+sellSignal = signalMode == "Simple" ? simpleSellSignal : signalMode == "Sniper" ? (sellTrigger or sellPullback) and sniperSellOk and cooldownOk : normalSellSignal
+
+if buySignal or sellSignal
     lastSignalBar := bar_index
 
-longStop = math.min(low, close - atrValue * atrStopMult)
-longTarget = close + (close - longStop) * rrTarget
-shortStop = math.max(high, close + atrValue * atrStopMult)
-shortTarget = close - (shortStop - close) * rrTarget
+plot(emaFast, "EMA rapide", color=color.aqua, linewidth=2)
+plot(emaSlow, "EMA lente", color=color.orange, linewidth=2)
+plot(emaTrend, "EMA tendance", color=color.purple, linewidth=2)
 
-if longSignal
-    activeEntry := close
-    activeStop := longStop
-    activeTarget := longTarget
-    activeDirection := 1
-    activeEntryBar := bar_index
-    strategy.entry("Long", strategy.long)
-    strategy.exit("Sortie Long", "Long", stop=longStop, limit=longTarget)
+bgcolor(showBackground ? emaFast > emaSlow ? color.new(color.green, 92) : color.new(color.red, 92) : na)
 
-if shortSignal
-    activeEntry := close
-    activeStop := shortStop
-    activeTarget := shortTarget
-    activeDirection := -1
-    activeEntryBar := bar_index
-    strategy.entry("Short", strategy.short)
-    strategy.exit("Sortie Short", "Short", stop=shortStop, limit=shortTarget)
+plotshape(buySignal, title="BUY", style=shape.labelup, location=location.belowbar,
+     color=color.lime, text="BUY", textcolor=color.black, size=size.small)
+plotshape(sellSignal, title="SELL", style=shape.labeldown, location=location.abovebar,
+     color=color.red, text="SELL", textcolor=color.white, size=size.small)
 
-canEvaluateExit = activeDirection != 0 and bar_index > activeEntryBar
-longStopHit = canEvaluateExit and activeDirection == 1 and low <= activeStop
-longTargetHit = canEvaluateExit and activeDirection == 1 and not longStopHit and high >= activeTarget
-shortStopHit = canEvaluateExit and activeDirection == -1 and high >= activeStop
-shortTargetHit = canEvaluateExit and activeDirection == -1 and not shortStopHit and low <= activeTarget
+alertcondition(buySignal, title="BUY EMA 9/21", message="BUY : EMA rapide au-dessus de l'EMA lente sur {{ticker}}")
+alertcondition(sellSignal, title="SELL EMA 9/21", message="SELL : EMA rapide sous l'EMA lente sur {{ticker}}")
 
-if longStopHit or longTargetHit
-    activeDirection := 0
-
-if shortStopHit or shortTargetHit
-    activeDirection := 0
-
-//====================================================
-// VISUEL
-//====================================================
-plot(emaFast, "EMA rapide", color=color.new(color.teal, 0), linewidth=2)
-plot(emaMid, "EMA swing", color=color.new(color.orange, 0), linewidth=2)
-plot(emaTrend, "EMA tendance", color=color.new(color.purple, 0), linewidth=2)
-
-bgcolor(showBackground and trendLongOk ? color.new(color.green, 94) : showBackground and trendShortOk ? color.new(color.red, 94) : na)
-barcolor(trendLongOk and momentumLongOk ? color.new(color.lime, 70) : trendShortOk and momentumShortOk ? color.new(color.red, 70) : na)
-
-plotshape(showStructure and hhSignal, title="HH", style=shape.labeldown, location=location.abovebar, offset=-pivotLen, color=color.new(color.green, 0), text="HH", textcolor=color.white, size=size.tiny)
-plotshape(showStructure and hlSignal, title="HL", style=shape.labelup, location=location.belowbar, offset=-pivotLen, color=color.new(color.teal, 0), text="HL", textcolor=color.white, size=size.tiny)
-plotshape(showStructure and lhSignal, title="LH", style=shape.labeldown, location=location.abovebar, offset=-pivotLen, color=color.new(color.orange, 0), text="LH", textcolor=color.white, size=size.tiny)
-plotshape(showStructure and llSignal, title="LL", style=shape.labelup, location=location.belowbar, offset=-pivotLen, color=color.new(color.red, 0), text="LL", textcolor=color.white, size=size.tiny)
-
-plotshape(showSignals and longSignal and not emaCrossLongSignal, title="Swing LONG", style=shape.labelup, location=location.belowbar, color=color.new(color.lime, 0), text="SWING\nLONG", textcolor=color.black, size=size.small)
-plotshape(showSignals and shortSignal and not emaCrossShortSignal, title="Swing SHORT", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), text="SWING\nSHORT", textcolor=color.white, size=size.small)
-plotshape(showSignals and emaCrossLongSignal, title="EMA LONG", style=shape.labelup, location=location.belowbar, color=color.new(color.aqua, 0), text="EMA\nLONG", textcolor=color.black, size=size.small)
-plotshape(showSignals and emaCrossShortSignal, title="EMA SHORT", style=shape.labeldown, location=location.abovebar, color=color.new(color.fuchsia, 0), text="EMA\nSHORT", textcolor=color.white, size=size.small)
-
-plot(showRiskLevels and activeDirection != 0 ? activeEntry : na, "Entree active", color=color.new(color.white, 0), linewidth=1, style=plot.style_linebr)
-plot(showRiskLevels and activeDirection != 0 ? activeStop : na, "Stop actif", color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
-plot(showRiskLevels and activeDirection != 0 ? activeTarget : na, "Objectif actif", color=color.new(color.lime, 0), linewidth=2, style=plot.style_linebr)
-
-//====================================================
-// PANNEAU
-//====================================================
-var table panel = table.new(position.top_right, 2, 12, bgcolor=color.new(color.black, 84), border_width=1, border_color=color.new(color.gray, 35))
+// Tableau simple : cet indicateur ne gere pas de positions ni de backtest.
+var table panel = table.new(position.top_right, 2, 9,
+     bgcolor=color.new(color.black, 82), border_width=1,
+     border_color=color.new(color.gray, 40))
 
 if showPanel and barstate.islast
-    trendText = trendLongOk ? "Haussiere" : trendShortOk ? "Baissiere" : "Neutre"
-    trendColor = trendLongOk ? color.lime : trendShortOk ? color.red : color.yellow
-    structureText = structureBias == 1 ? "HH/HL" : structureBias == -1 ? "LH/LL" : "Neutre"
-    structureColor = structureBias == 1 ? color.lime : structureBias == -1 ? color.red : color.yellow
-    momentumText = momentumLongOk ? "Bullish" : momentumShortOk ? "Bearish" : "Faible"
-    momentumColor = momentumLongOk ? color.lime : momentumShortOk ? color.red : color.gray
-    volumeText = volumeOk ? "OK" : "Faible"
-    volumeColor = volumeOk ? color.lime : color.gray
-    signalText = longSignal ? "LONG" : shortSignal ? "SHORT" : activeDirection == 1 ? "Long actif" : activeDirection == -1 ? "Short actif" : "Attente"
-    signalColor = longSignal or activeDirection == 1 ? color.lime : shortSignal or activeDirection == -1 ? color.red : color.gray
-    longStateText = activeDirection != 0 ? "Position active" : not trendLongOk ? "Tendance" : not longSetupOk ? "Pas de setup" : not momentumLongOk ? "Momentum" : not volumeOk ? "Volume" : not canSignal ? "Cooldown" : "Pret"
-    shortStateText = not showShorts ? "Desactive" : activeDirection != 0 ? "Position active" : not trendShortOk ? "Tendance" : useStrictShortFilter and not shortEmaSlopeOk ? "Pente EMA" : useStrictShortFilter and not shortNotExtended ? "Prix etendu" : not normalShortSetup ? "Pas de setup" : useStrictShortFilter and not strictShortSetup ? "Confirmation" : not momentumShortOk ? "Momentum" : not volumeOk ? "Volume" : not canSignal ? "Cooldown" : "Pret"
-    longStateColor = longStateText == "Pret" ? color.lime : color.gray
-    shortStateColor = shortStateText == "Pret" ? color.lime : color.gray
-    closedTrades = strategy.closedtrades
-    winRate = closedTrades > 0 ? strategy.wintrades * 100.0 / closedTrades : na
-    netProfitColor = strategy.netprofit >= 0 ? color.lime : color.red
+    trendBull = close > emaTrend
+    trendText = trendBull ? "Haussiere" : "Baissiere"
+    trendColor = trendBull ? color.lime : color.red
+    signalText = buySignal ? "BUY" : sellSignal ? "SELL" : "Attente"
+    signalColor = buySignal ? color.lime : sellSignal ? color.red : color.gray
 
-    table.cell(panel, 0, 0, "SwingSimple V01", text_color=color.white, bgcolor=color.new(color.blue, 60))
-    table.cell(panel, 1, 0, syminfo.ticker, text_color=color.white, bgcolor=color.new(color.blue, 60))
-    table.cell(panel, 0, 1, "Tendance", text_color=color.white)
-    table.cell(panel, 1, 1, trendText, text_color=trendColor)
-    table.cell(panel, 0, 2, "Structure", text_color=color.white)
-    table.cell(panel, 1, 2, structureText, text_color=structureColor)
-    table.cell(panel, 0, 3, "Momentum", text_color=color.white)
-    table.cell(panel, 1, 3, momentumText, text_color=momentumColor)
-    table.cell(panel, 0, 4, "RSI / ADX", text_color=color.white)
-    table.cell(panel, 1, 4, str.tostring(math.round(rsiValue, 1)) + " / " + str.tostring(math.round(adxValue, 1)), text_color=color.white)
-    table.cell(panel, 0, 5, "Volume", text_color=color.white)
-    table.cell(panel, 1, 5, volumeText, text_color=volumeColor)
-    table.cell(panel, 0, 6, "Signal", text_color=color.white)
-    table.cell(panel, 1, 6, signalText, text_color=signalColor)
-    table.cell(panel, 0, 7, "Etat long", text_color=color.white)
-    table.cell(panel, 1, 7, longStateText, text_color=longStateColor)
-    table.cell(panel, 0, 8, "Etat short", text_color=color.white)
-    table.cell(panel, 1, 8, shortStateText, text_color=shortStateColor)
-    table.cell(panel, 0, 9, "Trades fermes", text_color=color.white)
-    table.cell(panel, 1, 9, str.tostring(closedTrades), text_color=color.white)
-    table.cell(panel, 0, 10, "Taux gagnant", text_color=color.white)
-    table.cell(panel, 1, 10, closedTrades > 0 ? str.tostring(math.round(winRate, 1)) + "%" : "N/A", text_color=closedTrades > 0 ? color.white : color.gray)
-    table.cell(panel, 0, 11, "Profit net", text_color=color.white)
-    table.cell(panel, 1, 11, str.tostring(math.round(strategy.netprofit, 2)), text_color=netProfitColor)
+    table.cell(panel, 0, 0, "EMA Simple", text_color=color.white, bgcolor=color.new(color.blue, 55))
+    table.cell(panel, 1, 0, syminfo.ticker, text_color=color.white, bgcolor=color.new(color.blue, 55))
+    table.cell(panel, 0, 1, "Timeframe", text_color=color.white)
+    table.cell(panel, 1, 1, timeframe.period == "1" ? "1M OK" : timeframe.period, text_color=timeframe.period == "1" ? color.lime : color.orange)
+    table.cell(panel, 0, 2, "Tendance", text_color=color.white)
+    table.cell(panel, 1, 2, trendText, text_color=trendColor)
+    table.cell(panel, 0, 3, "Signal", text_color=color.white)
+    table.cell(panel, 1, 3, signalText, text_color=signalColor)
+    table.cell(panel, 0, 4, "EMA 9", text_color=color.white)
+    table.cell(panel, 1, 4, str.tostring(emaFast, format.mintick), text_color=color.aqua)
+    table.cell(panel, 0, 5, "EMA 21", text_color=color.white)
+    table.cell(panel, 1, 5, str.tostring(emaSlow, format.mintick), text_color=color.orange)
+    table.cell(panel, 0, 6, "Ecart EMA", text_color=color.white)
+    table.cell(panel, 1, 6, str.tostring(emaGapPct, "#.###") + "%", text_color=emaGapOk ? color.lime : color.gray)
+    table.cell(panel, 0, 7, "RSI", text_color=color.white)
+    table.cell(panel, 1, 7, str.tostring(rsiValue, "#.0"), text_color=color.white)
+    table.cell(panel, 0, 8, "Mode", text_color=color.white)
+    table.cell(panel, 1, 8, signalMode, text_color=signalMode == "Sniper" ? color.yellow : color.gray)
 
 if not showPanel and barstate.islast
-    table.clear(panel, 0, 0, 1, 11)
-
-//====================================================
-// ALERTES
-//====================================================
-alertcondition(longSignal, title="SwingTradingsimpleV01 LONG", message="SwingTradingsimpleV01: signal LONG sur {{ticker}}")
-alertcondition(shortSignal, title="SwingTradingsimpleV01 SHORT", message="SwingTradingsimpleV01: signal SHORT sur {{ticker}}")
-alertcondition(longStopHit, title="SwingTradingsimpleV01 stop long", message="SwingTradingsimpleV01: stop LONG touche sur {{ticker}}")
-alertcondition(longTargetHit, title="SwingTradingsimpleV01 objectif long", message="SwingTradingsimpleV01: objectif LONG touche sur {{ticker}}")
-alertcondition(shortStopHit, title="SwingTradingsimpleV01 stop short", message="SwingTradingsimpleV01: stop SHORT touche sur {{ticker}}")
-alertcondition(shortTargetHit, title="SwingTradingsimpleV01 objectif short", message="SwingTradingsimpleV01: objectif SHORT touche sur {{ticker}}")
+    table.clear(panel, 0, 0, 1, 8)
