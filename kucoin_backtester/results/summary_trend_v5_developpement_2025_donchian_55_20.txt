@@ -1,0 +1,10 @@
+BTC Trend V5 — developpement_2025 — donchian_55_20
+Timeframe: 4H | Long/cash | Risque: 0.50%
+Trades: 18 | PnL net: 1105.20 USDT
+Profit factor: 6.456 | Gagnants: 61.11%
+Gain moyen: 118.89 USDT
+Perte moyenne: -28.94 USDT
+Frais: 16.57 | Funding: 118.27 USDT
+Drawdown maximum: -1.49%
+Sorties canal/ATR/fin: 2/16/0
+Benchmark Buy&Hold futures net du funding: 17120.62 USDT

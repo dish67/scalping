@@ -1,0 +1,8 @@
+BTC Daily Regime V6.1 — developpement_jusqua_2024 — btcc_vip3_base
+Période mesurée en continu: 2020-10-15 00:00:00+00:00 → 2024-12-31 00:00:00+00:00
+Equity début/fin: 10000.00 → 59959.99 USDT
+PnL de période: 49959.99 USDT (499.60%)
+Drawdown de période: -65.73% | Exposition: 59.91%
+Entrées/sorties pendant la période: 18/17
+Buy&Hold perp de période: 67252.54 USDT | Buy&Hold spot proxy: 71864.92 USDT
+Note: aucune position n'est fermée artificiellement à la frontière.

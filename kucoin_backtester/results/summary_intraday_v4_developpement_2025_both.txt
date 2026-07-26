@@ -1,0 +1,12 @@
+BTC Intraday V4 — developpement_2025 — both
+Timeframe: 15m | Contexte: 4H | Risque: 0.25%
+Frais taker: 0.035% | Funding conservateur: 0.010% / 8H
+Configurations: 34 | Trades: 4
+PnL net: 50.35 USDT
+Profit factor: 2.923
+Taux gagnant: 75.00%
+Gain moyen: 25.51 USDT
+Perte moyenne: -26.18 USDT
+Frais: 4.56 USDT | Funding: 3.32 USDT
+Drawdown maximum: -0.26%
+Sorties cible/stop/temps: 1/1/2

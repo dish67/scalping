@@ -1,0 +1,10 @@
+Direction: long
+Commission par ordre: 0.035%
+Trades: 84
+PnL net: -973.39 USDT
+Profit factor: 0.539
+Taux gagnant: 25.00%
+Gain moyen: 54.20 USDT
+Perte moyenne: -33.52 USDT
+Frais: 518.81 USDT
+Drawdown maximum: -9.87%

@@ -1,0 +1,8 @@
+BTC Daily Regime V6.1 — validation_2025 — btcc_vip3_base
+Période mesurée en continu: 2025-01-01 00:00:00+00:00 → 2025-12-31 00:00:00+00:00
+Equity début/fin: 59959.99 → 46605.37 USDT
+PnL de période: -13354.62 USDT (-22.27%)
+Drawdown de période: -32.71% | Exposition: 73.42%
+Entrées/sorties pendant la période: 8/9
+Buy&Hold perp de période: -1735.45 USDT | Buy&Hold spot proxy: -643.83 USDT
+Note: aucune position n'est fermée artificiellement à la frontière.

@@ -1,0 +1,10 @@
+BTC Liquidity FVG V3 — fvg_ob — both
+Frais entrée maker: 0.020% | sortie taker: 0.035%
+Configurations: 79 | Trades exécutés: 42
+PnL net: -475.43 USDT
+Profit factor: 0.612
+Taux gagnant: 23.81%
+Gain moyen: 75.13 USDT
+Perte moyenne: -38.34 USDT
+Frais: 194.39 USDT
+Drawdown maximum: -5.51%

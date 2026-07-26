@@ -1,0 +1,11 @@
+BTC Trend V5 — validation_2026 — donchian_20_10
+Période: 2026-01-01 00:00:00+00:00 → 2026-07-23 20:00:00+00:00
+Timeframe: 4H | Long/cash | Risque: 0.50%
+Trades: 19 | PnL net: -227.33 USDT
+Profit factor: 0.368 | Gagnants: 42.11%
+Gain moyen: 16.52 USDT
+Perte moyenne: -32.68 USDT
+Frais: 16.62 | Funding: 22.62 USDT
+Drawdown maximum: -2.94%
+Sorties canal/ATR/fin: 9/10/0
+Benchmark Buy&Hold futures net du funding: -3189.70 USDT

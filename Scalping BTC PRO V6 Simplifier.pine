@@ -7,7 +7,9 @@ strategy("Scalping BTC PRO V6 Simplifier",
      default_qty_value=10,
      pyramiding=0,
      commission_type=strategy.commission.percent,
-     commission_value=0.04)
+     commission_value=0.04,
+     slippage=2,
+     process_orders_on_close=true)
 
 //====================================================
 // INPUTS
@@ -41,9 +43,24 @@ slopeLookback = input.int(3, "Lookback pente EMA", minval=1)
 minSlopePct = input.float(0.01, "Pente EMA minimum (%)", minval=0.0, step=0.01)
 useTrendFilter = input.bool(true, "Filtre tendance EMA 200")
 allowEarlyReversal = input.bool(true, "Retournement anticipe avant EMA 200")
+useDowntrendBreakoutBuy = input.bool(true, "BUY sur cassure ligne baissiere")
+trendlinePivotLen = input.int(3, "Force pivots ligne baissiere", minval=1)
+trendlineRequireBullEma = input.bool(true, "Cassure: exiger EMA 9 > EMA 21")
+useFastReversalBuy = input.bool(true, "BUY retournement haussier precoce")
+fastReversalBars = input.int(8, "Fenetre retournement precoce", minval=1)
 cooldownBars = input.int(5, "Cooldown entre signaux", minval=0)
 enableStrategyOrders = input.bool(false, "Activer ordres strategie")
 allowShorts = input.bool(true, "Autoriser shorts")
+atrLen = input.int(14, "Risque: periode ATR", minval=1)
+stopAtrMult = input.float(1.5, "Risque: stop ATR", minval=0.1, step=0.1)
+rewardRiskRatio = input.float(2.0, "Risque: objectif R", minval=0.1, step=0.1)
+useBreakEven = input.bool(true, "Risque: activer break-even")
+breakEvenTriggerR = input.float(1.0, "Risque: break-even apres R", minval=0.1, step=0.1)
+breakEvenOffsetTicks = input.int(2, "Risque: gain break-even (ticks)", minval=0)
+useAtrTrailing = input.bool(false, "Risque: activer trailing ATR")
+trailingTriggerR = input.float(1.5, "Risque: trailing apres R", minval=0.1, step=0.1)
+trailingAtrMult = input.float(1.0, "Risque: distance trailing ATR", minval=0.1, step=0.1)
+maxTradeBars = input.int(32, "Risque: sortie apres N bougies", minval=0)
 panelCorner = input.string("Top Right", "Position tableau", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"])
 
 //====================================================
@@ -127,7 +144,41 @@ breakoutShortOk = not useContinuationBreakout or close < ta.lowest(low, continua
 bullContinuation = useContinuationSignals and not bullCross and bullTrend and pullbackLong and close > emaFast and close > open and confirmedOk and spreadOk and slopeLongOk and trendLongOk and cooldownOk and continuationCooldownOk and continuationMoveOk and continuationLongCountOk and breakoutLongOk
 bearContinuation = useContinuationSignals and not bearCross and bearTrend and pullbackShort and close < emaFast and close < open and confirmedOk and spreadOk and slopeShortOk and trendShortOk and cooldownOk and continuationCooldownOk and continuationMoveOk and continuationShortCountOk and breakoutShortOk
 
-bullSignal = bullCross or bullContinuation
+// Ligne de tendance baissiere automatique construite avec les deux derniers
+// sommets pivots. Pine Script ne peut pas lire les lignes dessinees manuellement.
+pivotHigh = ta.pivothigh(high, trendlinePivotLen, trendlinePivotLen)
+var int previousPivotHighBar = na
+var float previousPivotHighPrice = na
+var int latestPivotHighBar = na
+var float latestPivotHighPrice = na
+var line downtrendLine = na
+
+if not na(pivotHigh)
+    newPivotBar = bar_index - trendlinePivotLen
+    newPivotPrice = pivotHigh
+    if not na(latestPivotHighPrice) and newPivotPrice < latestPivotHighPrice
+        previousPivotHighBar := latestPivotHighBar
+        previousPivotHighPrice := latestPivotHighPrice
+        latestPivotHighBar := newPivotBar
+        latestPivotHighPrice := newPivotPrice
+        if not na(downtrendLine)
+            line.delete(downtrendLine)
+        downtrendLine := line.new(previousPivotHighBar, previousPivotHighPrice, latestPivotHighBar, latestPivotHighPrice, extend=extend.right, color=color.white, width=2)
+    else
+        latestPivotHighBar := newPivotBar
+        latestPivotHighPrice := newPivotPrice
+
+downtrendPrice = not na(downtrendLine) ? line.get_price(downtrendLine, bar_index) : na
+downtrendBreakoutBuy = useDowntrendBreakoutBuy and not na(downtrendPrice) and ta.crossover(close, downtrendPrice) and (not trendlineRequireBullEma or bullTrend) and confirmedOk and cooldownOk
+
+// Signal plus reactif apres le croisement haussier. Contrairement au signal
+// standard, il n'attend ni l'ecart EMA minimum ni le passage de l'EMA 200.
+// Une bougie verte au-dessus de l'EMA rapide avec une EMA 9 montante confirme
+// que le retournement commence reellement.
+fastReversalActive = useFastReversalBuy and not na(pendingCrossBar) and pendingDirection == 1 and bar_index - pendingCrossBar <= fastReversalBars
+fastReversalBuy = fastReversalActive and bullTrend and close > emaFast and close > open and emaFast > emaFast[1] and confirmedOk and cooldownOk
+
+bullSignal = bullCross or bullContinuation or downtrendBreakoutBuy or fastReversalBuy
 bearSignal = bearCross or bearContinuation
 
 if bullSignal or bearSignal
@@ -190,7 +241,7 @@ validSignalNow = bullSignal or bearSignal
 blockedBullCross = showBlockedCrosses and bullCrossRaw and not bullSignal
 blockedBearCross = showBlockedCrosses and bearCrossRaw and not bearSignal
 
-filterText = validSignalNow ? (earlyBullReversal or earlyBearReversal ? "Retournement anticipe" : "Signal valide") : setupNow and not crossSpreadOk ? "Range EMA" : setupNow and not cooldownOk ? "Cooldown" : bullSetup and not slopeLongOk ? "Pente faible" : bearSetup and not slopeShortOk ? "Pente faible" : bullSetup and not crossTrendLongOk ? "Sous EMA 200" : bearSetup and not crossTrendShortOk ? "Sur EMA 200" : setupNow and not confirmedOk ? "Bougie ouverte" : useContinuationBreakout and bullTrend and pullbackLong and not breakoutLongOk ? "Pas cassure" : useContinuationBreakout and bearTrend and pullbackShort and not breakoutShortOk ? "Pas cassure" : pendingActive ? "Cross en attente" : "Pret"
+filterText = validSignalNow ? (downtrendBreakoutBuy ? "Cassure ligne baissiere" : fastReversalBuy ? "Retournement precoce" : earlyBullReversal or earlyBearReversal ? "Retournement anticipe" : "Signal valide") : setupNow and not crossSpreadOk ? "Range EMA" : setupNow and not cooldownOk ? "Cooldown" : bullSetup and not slopeLongOk ? "Pente faible" : bearSetup and not slopeShortOk ? "Pente faible" : bullSetup and not crossTrendLongOk ? "Sous EMA 200" : bearSetup and not crossTrendShortOk ? "Sur EMA 200" : setupNow and not confirmedOk ? "Bougie ouverte" : useContinuationBreakout and bullTrend and pullbackLong and not breakoutLongOk ? "Pas cassure" : useContinuationBreakout and bearTrend and pullbackShort and not breakoutShortOk ? "Pas cassure" : pendingActive ? "Cross en attente" : "Pret"
 filterColor = validSignalNow ? signalColor : filterText == "Pret" ? color.lime : filterText == "Cross en attente" ? color.aqua : color.orange
 
 //====================================================
@@ -206,14 +257,101 @@ if enableStrategyOrders and bearSignal
         strategy.close("LONG")
 
 //====================================================
+// GESTION DU RISQUE ET SORTIES DE BACKTEST
+//====================================================
+atrValue = ta.atr(atrLen)
+var float entryRiskDistance = na
+var float highestSinceEntry = na
+var float lowestSinceEntry = na
+var int tradeEntryBar = na
+var bool breakEvenArmed = false
+var bool trailingArmed = false
+
+newLongPosition = strategy.position_size > 0 and strategy.position_size[1] <= 0
+newShortPosition = strategy.position_size < 0 and strategy.position_size[1] >= 0
+
+if newLongPosition or newShortPosition
+    entryRiskDistance := atrValue * stopAtrMult
+    highestSinceEntry := high
+    lowestSinceEntry := low
+    tradeEntryBar := bar_index
+    breakEvenArmed := false
+    trailingArmed := false
+
+if strategy.position_size > 0
+    highestSinceEntry := math.max(nz(highestSinceEntry, high), high)
+    if useBreakEven and highestSinceEntry >= strategy.position_avg_price + entryRiskDistance * breakEvenTriggerR
+        breakEvenArmed := true
+    if useAtrTrailing and highestSinceEntry >= strategy.position_avg_price + entryRiskDistance * trailingTriggerR
+        trailingArmed := true
+
+if strategy.position_size < 0
+    lowestSinceEntry := math.min(nz(lowestSinceEntry, low), low)
+    if useBreakEven and lowestSinceEntry <= strategy.position_avg_price - entryRiskDistance * breakEvenTriggerR
+        breakEvenArmed := true
+    if useAtrTrailing and lowestSinceEntry <= strategy.position_avg_price - entryRiskDistance * trailingTriggerR
+        trailingArmed := true
+
+float activeStop = na
+float activeTarget = na
+
+if enableStrategyOrders and strategy.position_size > 0 and not na(entryRiskDistance)
+    initialLongStop = strategy.position_avg_price - entryRiskDistance
+    breakEvenLongStop = strategy.position_avg_price + breakEvenOffsetTicks * syminfo.mintick
+    trailingLongStop = highestSinceEntry - atrValue * trailingAtrMult
+    activeStop := breakEvenArmed ? math.max(initialLongStop, breakEvenLongStop) : initialLongStop
+    activeStop := trailingArmed ? math.max(activeStop, trailingLongStop) : activeStop
+    activeTarget := strategy.position_avg_price + entryRiskDistance * rewardRiskRatio
+    strategy.exit("LONG EXIT", from_entry="LONG", stop=activeStop, limit=activeTarget)
+
+if enableStrategyOrders and strategy.position_size < 0 and not na(entryRiskDistance)
+    initialShortStop = strategy.position_avg_price + entryRiskDistance
+    breakEvenShortStop = strategy.position_avg_price - breakEvenOffsetTicks * syminfo.mintick
+    trailingShortStop = lowestSinceEntry + atrValue * trailingAtrMult
+    activeStop := breakEvenArmed ? math.min(initialShortStop, breakEvenShortStop) : initialShortStop
+    activeStop := trailingArmed ? math.min(activeStop, trailingShortStop) : activeStop
+    activeTarget := strategy.position_avg_price - entryRiskDistance * rewardRiskRatio
+    strategy.exit("SHORT EXIT", from_entry="SHORT", stop=activeStop, limit=activeTarget)
+
+barsInTrade = na(tradeEntryBar) ? 0 : bar_index - tradeEntryBar
+if enableStrategyOrders and maxTradeBars > 0 and strategy.position_size > 0 and barsInTrade >= maxTradeBars
+    strategy.close("LONG", comment="Sortie temps")
+
+if enableStrategyOrders and maxTradeBars > 0 and strategy.position_size < 0 and barsInTrade >= maxTradeBars
+    strategy.close("SHORT", comment="Sortie temps")
+
+if strategy.position_size == 0
+    entryRiskDistance := na
+    highestSinceEntry := na
+    lowestSinceEntry := na
+    tradeEntryBar := na
+    breakEvenArmed := false
+    trailingArmed := false
+
+//====================================================
 // VISUALS
 //====================================================
 plot(emaFast, "EMA 9", color=color.new(color.lime, 0), linewidth=2)
 plot(emaSlow, "EMA 21", color=color.new(color.orange, 0), linewidth=2)
 plot(useTrendFilter ? emaTrend : na, "EMA 200", color=color.new(color.blue, 0), linewidth=2)
+plot(enableStrategyOrders ? activeStop : na, "Stop actif", color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
+plot(enableStrategyOrders ? activeTarget : na, "Objectif actif", color=color.new(color.aqua, 0), linewidth=2, style=plot.style_linebr)
 
-plotshape(showSignals and bullSignal,
-     title="Croisement haussier EMA 9/21",
+// Distinguer visuellement le croisement EMA initial des autres types de BUY.
+bullEmaCrossSignal = bullSignal and (bullCross or bullCrossRaw)
+bullOtherBuySignal = bullSignal and not bullEmaCrossSignal
+
+plotshape(showSignals and bullEmaCrossSignal,
+     title="Signal croisement haussier EMA 9/21",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=color.new(color.lime, 0),
+     text="CROSS 9/21",
+     textcolor=color.black,
+     size=size.tiny)
+
+plotshape(showSignals and bullOtherBuySignal,
+     title="Autre signal BUY",
      style=shape.labelup,
      location=location.belowbar,
      color=color.new(color.lime, 0),

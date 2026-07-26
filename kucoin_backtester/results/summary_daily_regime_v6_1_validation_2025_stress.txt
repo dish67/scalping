@@ -1,0 +1,8 @@
+BTC Daily Regime V6.1 — validation_2025 — stress
+Période mesurée en continu: 2025-01-01 00:00:00+00:00 → 2025-12-31 00:00:00+00:00
+Equity début/fin: 54374.78 → 40489.86 USDT
+PnL de période: -13884.92 USDT (-25.54%)
+Drawdown de période: -34.13% | Exposition: 73.42%
+Entrées/sorties pendant la période: 8/9
+Buy&Hold perp de période: -2285.69 USDT | Buy&Hold spot proxy: -648.51 USDT
+Note: aucune position n'est fermée artificiellement à la frontière.

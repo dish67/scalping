@@ -1,0 +1,8 @@
+BTC Daily Regime V6.1 — developpement_jusqua_2024 — stress
+Période mesurée en continu: 2020-10-15 00:00:00+00:00 → 2024-12-31 00:00:00+00:00
+Equity début/fin: 10000.00 → 54374.78 USDT
+PnL de période: 44374.78 USDT (443.75%)
+Drawdown de période: -67.00% | Exposition: 59.91%
+Entrées/sorties pendant la période: 18/17
+Buy&Hold perp de période: 64906.46 USDT | Buy&Hold spot proxy: 71824.00 USDT
+Note: aucune position n'est fermée artificiellement à la frontière.

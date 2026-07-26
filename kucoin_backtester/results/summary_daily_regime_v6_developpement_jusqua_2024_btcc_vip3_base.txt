@@ -1,0 +1,11 @@
+BTC Daily Regime V6 — developpement_jusqua_2024 — btcc_vip3_base
+Période: 2020-10-15 00:00:00+00:00 → 2024-12-31 00:00:00+00:00
+Règle: clôture > SMA 200 | Exécution: prochain open | Long/cash 1x
+Frais taker: 0.035% | Funding: 0.010% / 8H | Slippage: 0.010% / ordre
+Trades: 18 | PnL net: 49953.90 USDT (499.54%)
+Profit factor: 4.148 | Gagnants: 27.78%
+Drawdown maximum: -65.73% | Exposition: 59.84%
+Durée moyenne/médiane: 51.2/5.0 jours
+Frais: 385.96 | Funding: 5941.58 USDT
+Sorties SMA/fin: 17/1
+Buy&Hold perp net funding: 67252.54 USDT | Buy&Hold spot proxy: 71864.92 USDT

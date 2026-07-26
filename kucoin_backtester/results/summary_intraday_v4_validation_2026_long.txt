@@ -1,0 +1,12 @@
+BTC Intraday V4 — validation_2026 — long
+Timeframe: 15m | Contexte: 4H | Risque: 0.25%
+Frais taker: 0.035% | Funding conservateur: 0.010% / 8H
+Configurations: 3 | Trades: 1
+PnL net: -18.29 USDT
+Profit factor: 0.000
+Taux gagnant: 0.00%
+Gain moyen: 0.00 USDT
+Perte moyenne: -18.29 USDT
+Frais: 1.08 USDT | Funding: 0.31 USDT
+Drawdown maximum: -0.18%
+Sorties cible/stop/temps: 0/0/1

@@ -1,0 +1,10 @@
+Direction: short
+Commission par ordre: 0.035%
+Trades: 69
+PnL net: -457.04 USDT
+Profit factor: 0.754
+Taux gagnant: 31.88%
+Gain moyen: 63.81 USDT
+Perte moyenne: -39.59 USDT
+Frais: 396.05 USDT
+Drawdown maximum: -7.20%

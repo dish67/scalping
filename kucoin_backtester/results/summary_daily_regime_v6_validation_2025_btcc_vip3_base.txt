@@ -1,0 +1,11 @@
+BTC Daily Regime V6 — validation_2025 — btcc_vip3_base
+Période: 2025-01-01 00:00:00+00:00 → 2025-12-31 00:00:00+00:00
+Règle: clôture > SMA 200 | Exécution: prochain open | Long/cash 1x
+Frais taker: 0.035% | Funding: 0.010% / 8H | Slippage: 0.010% / ordre
+Trades: 9 | PnL net: -2342.83 USDT (-23.43%)
+Profit factor: 0.213 | Gagnants: 11.11%
+Drawdown maximum: -32.75% | Exposition: 73.15%
+Durée moyenne/médiane: 29.7/3.0 jours
+Frais: 50.88 | Funding: 653.90 USDT
+Sorties SMA/fin: 9/0
+Buy&Hold perp net funding: -1735.45 USDT | Buy&Hold spot proxy: -643.83 USDT

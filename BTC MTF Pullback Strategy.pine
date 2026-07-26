@@ -1,0 +1,240 @@
+//@version=5
+strategy("BTC MTF Pullback Strategy V2.2", overlay=true, pyramiding=0,
+     initial_capital=10000, currency=currency.USD,
+     commission_type=strategy.commission.percent, commission_value=0.06,
+     slippage=2, process_orders_on_close=true,
+     max_labels_count=500)
+
+// ───────────────────────── Parametres
+tradeDirection = input.string("Long & Short", "Direction", options=["Long & Short", "Long seulement", "Short seulement"])
+higherTf = input.timeframe("60", "Timeframe tendance")
+tradeSession = input.session("0000-2359", "Session de trading")
+
+htfFastLength = input.int(20, "HTF EMA rapide", minval=2, group="Tendance MTF")
+htfSlowLength = input.int(50, "HTF EMA lente", minval=5, group="Tendance MTF")
+htfTrendLength = input.int(200, "HTF EMA tendance", minval=20, group="Tendance MTF")
+htfSlopeBars = input.int(3, "HTF pente EMA 50", minval=1, group="Tendance MTF")
+
+entryEmaLength = input.int(20, "EMA de pullback", minval=2, group="Entree")
+entrySlowEmaLength = input.int(50, "EMA locale lente", minval=5, group="Entree")
+localSlopeBars = input.int(3, "Pente EMA locale (bougies)", minval=1, group="Entree")
+pullbackTolerancePct = input.float(0.10, "Tolerance pullback (%)", minval=0.01, step=0.01, group="Entree")
+pullbackValidBars = input.int(4, "Validite du pullback (bougies)", minval=1, maxval=10, group="Entree")
+breakoutLookback = input.int(2, "Cassure structure (bougies)", minval=2, maxval=20, group="Entree")
+rsiLength = input.int(14, "RSI longueur", minval=2, group="Entree")
+longRsiMin = input.float(50, "BUY RSI minimum", minval=1, maxval=99, group="Entree")
+longRsiMax = input.float(70, "BUY RSI maximum", minval=1, maxval=99, group="Entree")
+shortRsiMin = input.float(30, "SELL RSI minimum", minval=1, maxval=99, group="Entree")
+shortRsiMax = input.float(50, "SELL RSI maximum", minval=1, maxval=99, group="Entree")
+volumeLength = input.int(20, "Volume moyenne", minval=2, group="Entree")
+volumeMultiplier = input.float(1.1, "Volume minimum x moyenne", minval=0, step=0.1, group="Entree")
+maxExtensionAtr = input.float(1.2, "Extension maximum depuis EMA (ATR)", minval=0.1, step=0.1, group="Entree")
+minBodyAtr = input.float(0.20, "Corps bougie minimum (ATR)", minval=0, step=0.05, group="Entree")
+closeQualityPct = input.float(30, "Cloture max depuis extremite (%)", minval=5, maxval=50, step=5, group="Entree")
+
+atrLength = input.int(14, "ATR longueur", minval=2, group="Risque")
+minAtrPct = input.float(0.05, "ATR minimum (%)", minval=0, step=0.01, group="Risque")
+maxAtrPct = input.float(0.50, "ATR maximum (%)", minval=0.01, step=0.05, group="Risque")
+swingLookback = input.int(7, "Structure stop (bougies)", minval=2, group="Risque")
+atrStopBuffer = input.float(0.30, "Marge stop ATR", minval=0, step=0.05, group="Risque")
+minStopAtr = input.float(0.80, "Distance stop minimum ATR", minval=0.1, step=0.1, group="Risque")
+riskReward = input.float(1.5, "Objectif Risk/Reward", minval=0.5, step=0.1, group="Risque")
+riskPerTradePct = input.float(0.50, "Risque par trade (%)", minval=0.05, maxval=2, step=0.05, group="Risque")
+maxCapitalPct = input.float(100, "Capital maximum engage (%)", minval=1, maxval=500, step=5, group="Risque")
+minTargetPct = input.float(0.40, "Mouvement objectif minimum (%)", minval=0.10, step=0.05, group="Couts")
+minRewardCostMultiple = input.float(3.0, "Gain brut minimum / cout A-R", minval=1, step=0.5, group="Couts")
+maxTargetAtr = input.float(8.0, "Objectif maximum realiste (ATR)", minval=1, step=0.5, group="Couts")
+// Ces valeurs correspondent exactement aux proprietes strategy() en haut.
+feePerOrderPct = 0.06
+estimatedSlippageTicks = 2
+
+maxTradesPerDay = input.int(3, "Trades maximum par jour", minval=1, group="Protections")
+maxConsecutiveLosses = input.int(3, "Pertes consecutives maximum", minval=1, group="Protections")
+maxDailyLossPct = input.float(1.50, "Perte quotidienne maximum (%)", minval=0.1, step=0.1, group="Protections")
+cooldownBars = input.int(12, "Pause apres une sortie (bougies)", minval=0, group="Protections")
+
+showHtfEma = input.bool(true, "Afficher EMA 200 HTF", group="Affichage")
+showDashboard = input.bool(true, "Afficher le tableau", group="Affichage")
+
+// ───────────────────────── Calculs locaux
+emaEntry = ta.ema(close, entryEmaLength)
+emaEntrySlow = ta.ema(close, entrySlowEmaLength)
+sessionVwap = ta.vwap(hlc3)
+rsiValue = ta.rsi(close, rsiLength)
+atrValue = ta.atr(atrLength)
+atrPct = close != 0 ? atrValue / close * 100 : 0
+volumeAverage = ta.sma(volume, volumeLength)
+
+// Derniere bougie HTF cloturee, sans lookahead_on. Ce choix est conservateur :
+// la tendance arrive plus tard, mais TradingView ne peut pas lire le futur.
+htfClose = request.security(syminfo.tickerid, higherTf, close[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+htfFast = request.security(syminfo.tickerid, higherTf, ta.ema(close, htfFastLength)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+htfSlow = request.security(syminfo.tickerid, higherTf, ta.ema(close, htfSlowLength)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+htfTrend = request.security(syminfo.tickerid, higherTf, ta.ema(close, htfTrendLength)[1], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+htfSlowPast = request.security(syminfo.tickerid, higherTf, ta.ema(close, htfSlowLength)[1 + htfSlopeBars], gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+longTrend = htfClose > htfTrend and htfFast > htfSlow and htfSlow > htfSlowPast
+shortTrend = htfClose < htfTrend and htfFast < htfSlow and htfSlow < htfSlowPast
+
+pullbackTolerance = pullbackTolerancePct / 100
+// Un contact exige que la bougie traverse reellement la zone de tolerance.
+// Etre simplement sous l'EMA (ou au-dessus pour un short) ne suffit plus.
+emaZoneTouched = low <= emaEntry * (1 + pullbackTolerance) and high >= emaEntry * (1 - pullbackTolerance)
+vwapZoneTouched = low <= sessionVwap * (1 + pullbackTolerance) and high >= sessionVwap * (1 - pullbackTolerance)
+longTouch = emaZoneTouched or vwapZoneTouched
+shortTouch = emaZoneTouched or vwapZoneTouched
+longPullbackRecent = ta.barssince(longTouch) <= pullbackValidBars
+shortPullbackRecent = ta.barssince(shortTouch) <= pullbackValidBars
+
+longBreakLevel = ta.highest(high[1], breakoutLookback)
+shortBreakLevel = ta.lowest(low[1], breakoutLookback)
+barRange = high - low
+bodySize = math.abs(close - open)
+longCandleQuality = barRange > 0 and bodySize >= atrValue * minBodyAtr and (high - close) / barRange * 100 <= closeQualityPct
+shortCandleQuality = barRange > 0 and bodySize >= atrValue * minBodyAtr and (close - low) / barRange * 100 <= closeQualityPct
+longBreak = close > open and close > longBreakLevel and close > emaEntry and close > sessionVwap and longCandleQuality
+shortBreak = close < open and close < shortBreakLevel and close < emaEntry and close < sessionVwap and shortCandleQuality
+longLocalTrend = emaEntry > emaEntrySlow and emaEntrySlow > emaEntrySlow[localSlopeBars]
+shortLocalTrend = emaEntry < emaEntrySlow and emaEntrySlow < emaEntrySlow[localSlopeBars]
+longRsiOk = rsiValue >= longRsiMin and rsiValue <= longRsiMax
+shortRsiOk = rsiValue >= shortRsiMin and rsiValue <= shortRsiMax
+volumeOk = volumeMultiplier == 0 or volume >= volumeAverage * volumeMultiplier
+volatilityOk = atrPct >= minAtrPct and atrPct <= maxAtrPct
+longExtensionOk = close - emaEntry <= atrValue * maxExtensionAtr
+shortExtensionOk = emaEntry - close <= atrValue * maxExtensionAtr
+inSession = not na(time(timeframe.period, tradeSession))
+
+// ───────────────────────── Protections de session
+newDay = ta.change(time("D")) != 0
+var float dayStartNetProfit = 0
+var int tradesToday = 0
+var int consecutiveLosses = 0
+var int lastExitBar = na
+
+if barstate.isfirst
+    dayStartNetProfit := strategy.netprofit
+
+if newDay
+    dayStartNetProfit := strategy.netprofit
+    tradesToday := 0
+    consecutiveLosses := 0
+
+newClosedTrade = strategy.closedtrades > nz(strategy.closedtrades[1])
+if newClosedTrade
+    lastTradeIndex = strategy.closedtrades - 1
+    lastTradeProfit = strategy.closedtrades.profit(lastTradeIndex)
+    consecutiveLosses := lastTradeProfit < 0 ? consecutiveLosses + 1 : 0
+    lastExitBar := bar_index
+
+currentEquity = math.max(strategy.equity, 0)
+dailyPnl = strategy.netprofit - dayStartNetProfit
+dailyLossLimit = currentEquity * maxDailyLossPct / 100
+dailyLossHit = dailyPnl <= -dailyLossLimit
+tradeCountOk = tradesToday < maxTradesPerDay
+lossStreakOk = consecutiveLosses < maxConsecutiveLosses
+cooldownOk = na(lastExitBar) or bar_index - lastExitBar > cooldownBars
+protectionsOk = not dailyLossHit and tradeCountOk and lossStreakOk and cooldownOk
+
+allowLong = tradeDirection != "Short seulement"
+allowShort = tradeDirection != "Long seulement"
+flat = strategy.position_size == 0
+
+// Plan du trade calcule avant le signal. Le cout A-R inclut deux commissions
+// et deux estimations de slippage.
+longPlannedStop = math.min(ta.lowest(low, swingLookback) - atrValue * atrStopBuffer, close - atrValue * minStopAtr)
+shortPlannedStop = math.max(ta.highest(high, swingLookback) + atrValue * atrStopBuffer, close + atrValue * minStopAtr)
+longStopDistance = close - longPlannedStop
+shortStopDistance = shortPlannedStop - close
+roundTripCostPerUnit = close * feePerOrderPct / 100 * 2 + syminfo.mintick * estimatedSlippageTicks * 2
+minimumTargetDistance = math.max(close * minTargetPct / 100, roundTripCostPerUnit * minRewardCostMultiple)
+longNetRiskPerUnit = longStopDistance + roundTripCostPerUnit
+shortNetRiskPerUnit = shortStopDistance + roundTripCostPerUnit
+longTargetDistance = math.max(longNetRiskPerUnit * riskReward + roundTripCostPerUnit, minimumTargetDistance)
+shortTargetDistance = math.max(shortNetRiskPerUnit * riskReward + roundTripCostPerUnit, minimumTargetDistance)
+longTargetRealistic = longTargetDistance <= atrValue * maxTargetAtr
+shortTargetRealistic = shortTargetDistance <= atrValue * maxTargetAtr
+
+longSignal = barstate.isconfirmed and flat and inSession and protectionsOk and allowLong and longTrend and longLocalTrend and longPullbackRecent and longBreak and longRsiOk and volumeOk and volatilityOk and longExtensionOk and longTargetRealistic
+shortSignal = barstate.isconfirmed and flat and inSession and protectionsOk and allowShort and shortTrend and shortLocalTrend and shortPullbackRecent and shortBreak and shortRsiOk and volumeOk and volatilityOk and shortExtensionOk and shortTargetRealistic
+
+// ───────────────────────── Ordres et taille selon le risque
+var float activeStop = na
+var float activeTarget = na
+var float activeRisk = na
+
+if longSignal
+    activeStop := longPlannedStop
+    activeRisk := close - activeStop
+    riskCash = currentEquity * riskPerTradePct / 100
+    riskQty = longNetRiskPerUnit > syminfo.mintick ? riskCash / longNetRiskPerUnit : 0
+    capitalQty = close > 0 ? currentEquity * maxCapitalPct / 100 / close : 0
+    orderQty = math.min(riskQty, capitalQty)
+    activeTarget := close + longTargetDistance
+    if orderQty > 0
+        strategy.entry("Long", strategy.long, qty=orderQty, alert_message="BTC MTF BUY")
+        strategy.exit("Long Exit", "Long", stop=activeStop, limit=activeTarget, alert_message="BTC MTF LONG EXIT")
+        label.new(bar_index, low, "BUY\nCout inclus\nTP " + str.tostring(longTargetDistance / close * 100, "#.##") + "%", style=label.style_label_up, color=color.lime, textcolor=color.black)
+        tradesToday += 1
+
+if shortSignal
+    activeStop := shortPlannedStop
+    activeRisk := activeStop - close
+    riskCash = currentEquity * riskPerTradePct / 100
+    riskQty = shortNetRiskPerUnit > syminfo.mintick ? riskCash / shortNetRiskPerUnit : 0
+    capitalQty = close > 0 ? currentEquity * maxCapitalPct / 100 / close : 0
+    orderQty = math.min(riskQty, capitalQty)
+    activeTarget := close - shortTargetDistance
+    if orderQty > 0
+        strategy.entry("Short", strategy.short, qty=orderQty, alert_message="BTC MTF SELL")
+        strategy.exit("Short Exit", "Short", stop=activeStop, limit=activeTarget, alert_message="BTC MTF SHORT EXIT")
+        label.new(bar_index, high, "SELL\nCout inclus\nTP " + str.tostring(shortTargetDistance / close * 100, "#.##") + "%", style=label.style_label_down, color=color.red, textcolor=color.white)
+        tradesToday += 1
+
+if strategy.position_size > 0
+    strategy.exit("Long Exit", "Long", stop=activeStop, limit=activeTarget, alert_message="BTC MTF LONG EXIT")
+if strategy.position_size < 0
+    strategy.exit("Short Exit", "Short", stop=activeStop, limit=activeTarget, alert_message="BTC MTF SHORT EXIT")
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    activeStop := na
+    activeTarget := na
+    activeRisk := na
+
+// ───────────────────────── Affichage
+plot(emaEntry, "EMA Pullback", color=color.aqua, linewidth=2)
+plot(emaEntrySlow, "EMA locale lente", color=color.blue, linewidth=1)
+plot(sessionVwap, "VWAP", color=color.orange, linewidth=2)
+plot(showHtfEma ? htfTrend : na, "EMA 200 HTF", color=color.purple, linewidth=2)
+plot(strategy.position_size != 0 ? activeStop : na, "Stop", color=color.red, linewidth=2, style=plot.style_linebr)
+plot(strategy.position_size != 0 ? activeTarget : na, "Objectif", color=color.lime, linewidth=2, style=plot.style_linebr)
+
+plotshape(longSignal, title="BUY MTF", style=shape.labelup, location=location.belowbar, color=color.lime, text="BUY", textcolor=color.black, size=size.small)
+plotshape(shortSignal, title="SELL MTF", style=shape.labeldown, location=location.abovebar, color=color.red, text="SELL", textcolor=color.white, size=size.small)
+
+alertcondition(longSignal, title="BTC MTF V2.2 BUY", message="BUY MTF V2.2 confirme sur {{ticker}} {{interval}}")
+alertcondition(shortSignal, title="BTC MTF V2.2 SELL", message="SELL MTF V2.2 confirme sur {{ticker}} {{interval}}")
+
+var table dashboard = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 82), border_width=1)
+if showDashboard and barstate.islast
+    statusText = dailyLossHit ? "STOP JOUR" : not lossStreakOk ? "STOP PERTES" : not tradeCountOk ? "MAX TRADES" : "ACTIF"
+    statusColor = protectionsOk ? color.lime : color.red
+    trendText = longTrend ? "HAUSSIERE" : shortTrend ? "BAISSIERE" : "NEUTRE"
+    trendColor = longTrend ? color.lime : shortTrend ? color.red : color.gray
+    table.cell(dashboard, 0, 0, "BTC MTF V2.2", text_color=color.white, bgcolor=color.new(color.blue, 50))
+    table.cell(dashboard, 1, 0, timeframe.period + " / " + higherTf, text_color=color.white, bgcolor=color.new(color.blue, 50))
+    table.cell(dashboard, 0, 1, "Tendance", text_color=color.white)
+    table.cell(dashboard, 1, 1, trendText, text_color=trendColor)
+    table.cell(dashboard, 0, 2, "Statut", text_color=color.white)
+    table.cell(dashboard, 1, 2, statusText, text_color=statusColor)
+    table.cell(dashboard, 0, 3, "Trades jour", text_color=color.white)
+    table.cell(dashboard, 1, 3, str.tostring(tradesToday) + "/" + str.tostring(maxTradesPerDay), text_color=color.white)
+    table.cell(dashboard, 0, 4, "Pertes suite", text_color=color.white)
+    table.cell(dashboard, 1, 4, str.tostring(consecutiveLosses), text_color=consecutiveLosses > 0 ? color.orange : color.white)
+    table.cell(dashboard, 0, 5, "PnL jour", text_color=color.white)
+    table.cell(dashboard, 1, 5, str.tostring(dailyPnl, "#.##"), text_color=dailyPnl >= 0 ? color.lime : color.red)
+    table.cell(dashboard, 0, 6, "ATR", text_color=color.white)
+    table.cell(dashboard, 1, 6, str.tostring(atrPct, "#.###") + "%", text_color=volatilityOk ? color.lime : color.orange)
+    table.cell(dashboard, 0, 7, "Risque", text_color=color.white)
+    table.cell(dashboard, 1, 7, str.tostring(riskPerTradePct, "#.##") + "% / " + str.tostring(riskReward, "#.#") + "R", text_color=color.yellow)
+
+if not showDashboard and barstate.islast
+    table.clear(dashboard, 0, 0, 1, 7)

@@ -1,0 +1,16 @@
+BTC Daily Regime V6 — ensemble_complet_reference — stress
+Période: 2020-10-15 00:00:00+00:00 → 2026-07-23 00:00:00+00:00
+Règle: clôture > SMA 200 | Exécution: prochain open | Long/cash 1x
+Frais taker: 0.050% | Funding: 0.015% / 8H | Slippage: 0.020% / ordre
+Trades: 26 | PnL net: 30489.86 USDT (304.90%)
+Profit factor: 2.307 | Gagnants: 23.08%
+Drawdown maximum: -67.00% | Exposition: 56.45%
+Durée moyenne/médiane: 45.8/4.0 jours
+Frais: 862.19 | Funding: 13398.87 USDT
+Sorties SMA/fin: 26/0
+Buy&Hold perp net funding: 37451.54 USDT | Buy&Hold spot proxy: 46928.30 USDT
+Résultats par année de sortie:
+  2021: 10 trades | 8250.11 USDT | PF 1.652
+  2023: 2 trades | 3944.65 USDT | PF 11.163
+  2024: 5 trades | 17208.62 USDT | PF 6.784
+  2025: 9 trades | 1086.48 USDT | PF 1.148

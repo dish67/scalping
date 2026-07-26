@@ -5,7 +5,7 @@ indicator("EMA 9/21 Simple BUY SELL", overlay=true, max_labels_count=500)
 fastLength = input.int(9, "EMA rapide", minval=1)
 slowLength = input.int(21, "EMA lente", minval=2)
 trendLength = input.int(200, "EMA tendance", minval=20)
-signalMode = input.string("Sniper", "Mode signaux", options=["Simple", "Normal", "Sniper"])
+signalMode = input.string("Sniper", "Mode signaux", options=["Simple", "Normal", "Sniper", "Sniper Reversal"])
 useTrendFilter = input.bool(true, "Filtrer avec EMA tendance")
 useSlopeFilter = input.bool(false, "Confirmer la pente EMA 21")
 slopeLookback = input.int(3, "Pente (bougies)", minval=1)
@@ -16,6 +16,10 @@ pullbackTolerancePct = input.float(0.15, "Tolerance rebond EMA (%)", minval=0.05
 minEmaGapPct = input.float(0.02, "Ecart minimum EMA 9/21 (%)", minval=0, step=0.01)
 useRsiFilter = input.bool(true, "Filtrer avec RSI 50")
 rsiLength = input.int(14, "RSI longueur", minval=2)
+reversalLookback = input.int(15, "Reversal : recherche du creux", minval=5)
+reversalMaxBars = input.int(6, "Reversal : bougies depuis le creux", minval=1)
+reversalRsiMin = input.float(48, "Reversal : RSI minimum", minval=30, maxval=60, step=1)
+reversalMaxDistancePct = input.float(0.30, "Reversal : distance max EMA 21 (%)", minval=0.05, step=0.05)
 showBackground = input.bool(false, "Colorer la tendance")
 showPanel = input.bool(true, "Afficher le tableau")
 
@@ -56,10 +60,26 @@ sniperGapOk = emaGapPct >= math.max(minEmaGapPct, 0.05)
 sniperBuyOk = trendBuyOk and close > emaTrend and emaSlow > emaSlow[slopeLookback] and rsiValue >= 55 and diPlus > diMinus and adxValue >= 20 and close > high[1] and sniperGapOk
 sniperSellOk = trendSellOk and close < emaTrend and emaSlow < emaSlow[slopeLookback] and rsiValue <= 45 and diMinus > diPlus and adxValue >= 20 and close < low[1] and sniperGapOk
 
+// Mode Sniper Reversal : entree precoce apres un creux confirme par le prix.
+// Il n'exige pas encore EMA 9 > EMA 21 ni prix > EMA 200, contrairement au Sniper de tendance.
+barsFromRecentLow = math.abs(ta.lowestbars(low, reversalLookback))
+barsFromRecentHigh = math.abs(ta.highestbars(high, reversalLookback))
+recentLowOk = barsFromRecentLow <= reversalMaxBars
+recentHighOk = barsFromRecentHigh <= reversalMaxBars
+reversalDistancePct = close != 0 ? math.abs(close - emaSlow) / close * 100 : 0
+reversalDistanceOk = reversalDistancePct <= reversalMaxDistancePct
+earlyBullMomentum = close > open and close > high[1] and close > emaFast and emaFast > emaFast[1] and rsiValue >= reversalRsiMin and rsiValue > rsiValue[1]
+earlyBearMomentum = close < open and close < low[1] and close < emaFast and emaFast < emaFast[1] and rsiValue <= 100 - reversalRsiMin and rsiValue < rsiValue[1]
+reversalBuySetup = barstate.isconfirmed and recentLowOk and reversalDistanceOk and earlyBullMomentum
+reversalSellSetup = barstate.isconfirmed and recentHighOk and reversalDistanceOk and earlyBearMomentum
+// Un seul signal au premier instant ou toutes les confirmations deviennent vraies.
+reversalBuySignal = reversalBuySetup and not reversalBuySetup[1] and cooldownOk
+reversalSellSignal = reversalSellSetup and not reversalSellSetup[1] and cooldownOk
+
 simpleBuySignal = (rawBuyCross or buyPullback) and cooldownOk
 simpleSellSignal = (rawSellCross or sellPullback) and cooldownOk
-buySignal = signalMode == "Simple" ? simpleBuySignal : signalMode == "Sniper" ? (buyTrigger or buyPullback) and sniperBuyOk and cooldownOk : normalBuySignal
-sellSignal = signalMode == "Simple" ? simpleSellSignal : signalMode == "Sniper" ? (sellTrigger or sellPullback) and sniperSellOk and cooldownOk : normalSellSignal
+buySignal = signalMode == "Simple" ? simpleBuySignal : signalMode == "Sniper" ? (buyTrigger or buyPullback) and sniperBuyOk and cooldownOk : signalMode == "Sniper Reversal" ? reversalBuySignal : normalBuySignal
+sellSignal = signalMode == "Simple" ? simpleSellSignal : signalMode == "Sniper" ? (sellTrigger or sellPullback) and sniperSellOk and cooldownOk : signalMode == "Sniper Reversal" ? reversalSellSignal : normalSellSignal
 
 if buySignal or sellSignal
     lastSignalBar := bar_index
@@ -75,8 +95,8 @@ plotshape(buySignal, title="BUY", style=shape.labelup, location=location.belowba
 plotshape(sellSignal, title="SELL", style=shape.labeldown, location=location.abovebar,
      color=color.red, text="SELL", textcolor=color.white, size=size.small)
 
-alertcondition(buySignal, title="BUY EMA 9/21", message="BUY : EMA rapide au-dessus de l'EMA lente sur {{ticker}}")
-alertcondition(sellSignal, title="SELL EMA 9/21", message="SELL : EMA rapide sous l'EMA lente sur {{ticker}}")
+alertcondition(buySignal, title="BUY EMA/Reversal", message="BUY confirme par le mode actif sur {{ticker}} ({{interval}})")
+alertcondition(sellSignal, title="SELL EMA/Reversal", message="SELL confirme par le mode actif sur {{ticker}} ({{interval}})")
 
 // Tableau simple : cet indicateur ne gere pas de positions ni de backtest.
 var table panel = table.new(position.top_right, 2, 9,
@@ -107,7 +127,7 @@ if showPanel and barstate.islast
     table.cell(panel, 0, 7, "RSI", text_color=color.white)
     table.cell(panel, 1, 7, str.tostring(rsiValue, "#.0"), text_color=color.white)
     table.cell(panel, 0, 8, "Mode", text_color=color.white)
-    table.cell(panel, 1, 8, signalMode, text_color=signalMode == "Sniper" ? color.yellow : color.gray)
+    table.cell(panel, 1, 8, signalMode, text_color=signalMode == "Sniper" or signalMode == "Sniper Reversal" ? color.yellow : color.gray)
 
 if not showPanel and barstate.islast
     table.clear(panel, 0, 0, 1, 8)

@@ -1,0 +1,19 @@
+BTC Daily Regime V6.1 — ensemble_complet_reference — btcc_vip3_base
+Période: 2020-10-15 00:00:00+00:00 → 2026-07-23 00:00:00+00:00
+Règle: clôture > SMA 200 | Exécution: prochain open | Long/cash 1x
+Frais taker: 0.035% | Funding: 0.010% / 8H | Slippage: 0.010% / ordre
+Trades: 26 | PnL net: 36605.37 USDT (366.05%)
+Profit factor: 2.538 | Gagnants: 23.08%
+Drawdown maximum: -65.73% | Exposition: 56.45%
+Durée moyenne/médiane: 45.8/4.0 jours
+Frais: 653.27 | Funding: 9589.87 USDT
+Sorties SMA/fin: 26/0
+Buy&Hold perp net funding: 40637.98 USDT | Buy&Hold spot proxy: 46956.77 USDT
+Variation continue de l'equity par année:
+  2020: 14908.06 USDT (149.08%) | DD -10.84%
+  2021: -6016.74 USDT (-24.16%) | DD -65.52%
+  2022: 0.00 USDT (0.00%) | DD 0.00%
+  2023: 15590.57 USDT (82.53%) | DD -19.53%
+  2024: 25478.09 USDT (73.89%) | DD -27.56%
+  2025: -13354.62 USDT (-22.27%) | DD -32.71%
+  2026: 0.00 USDT (0.00%) | DD 0.00%
