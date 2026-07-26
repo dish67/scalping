@@ -340,6 +340,8 @@ plot(enableStrategyOrders ? activeTarget : na, "Objectif actif", color=color.new
 // Distinguer visuellement le croisement EMA initial des autres types de BUY.
 bullEmaCrossSignal = bullSignal and (bullCross or bullCrossRaw)
 bullOtherBuySignal = bullSignal and not bullEmaCrossSignal
+bearEmaCrossSignal = bearSignal and (bearCross or bearCrossRaw)
+bearOtherSellSignal = bearSignal and not bearEmaCrossSignal
 
 plotshape(showSignals and bullEmaCrossSignal,
      title="Signal croisement haussier EMA 9/21",
@@ -359,8 +361,17 @@ plotshape(showSignals and bullOtherBuySignal,
      textcolor=color.black,
      size=size.tiny)
 
-plotshape(showSignals and bearSignal,
-     title="Croisement baissier EMA 9/21",
+plotshape(showSignals and bearEmaCrossSignal,
+     title="Signal croisement baissier EMA 9/21",
+     style=shape.labeldown,
+     location=location.abovebar,
+     color=color.new(color.red, 0),
+     text="CROSS 9/21",
+     textcolor=color.white,
+     size=size.tiny)
+
+plotshape(showSignals and bearOtherSellSignal,
+     title="Autre signal SELL",
      style=shape.labeldown,
      location=location.abovebar,
      color=color.new(color.red, 0),
